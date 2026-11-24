@@ -3,10 +3,17 @@
 A live Hanabi advisor that reasons under **our group's conventions ("Meta")**,
 not generic AI conventions. Pure Python 3.10+, no runtime dependencies.
 
+## Setup
+
 ```powershell
-python -m venv .venv; .venv\Scripts\python -m pip install pytest
+git clone https://github.com/colefin8/hanabi-meta.git
+cd hanabi-meta
+python -m venv .venv
+.venv\Scripts\python -m pip install pytest
 .venv\Scripts\python -m pytest -q
 ```
+
+(On macOS/Linux use `.venv/bin/python` instead of `.venv\Scripts\python`.)
 
 ## Status
 
@@ -20,26 +27,78 @@ python -m venv .venv; .venv\Scripts\python -m pip install pytest
 | M6 JSONL logging + self-play harness | done, tested |
 | M7 (optional) HLE cross-check test for the regular variant | not started |
 
-## Using the advisor
+## Running it during a real game
+
+The advisor only knows what you type, so one person keeps it up to date as the
+game goes. Try it first on the example game:
 
 ```powershell
-.venv\Scripts\python -m hanabi_meta.cli examples\skip_level.txt --advise
-.venv\Scripts\python -m hanabi_meta.cli            # interactive: type the game as it happens
+.venv\Scripts\python -m hanabi_meta.cli examples\skip_level.txt
 ```
 
-In interactive mode, type game-file lines (`players 4`, `hand 1 R4 B4 W3 Y3`,
-`hint 2 1 yellow`, `hint 1 me 3 @1,4`, `play 3 4 Y2 G1`, `discard me 1 G2`). You can
-also use `show`, `advise`, `advise all` (also lists rejected misleading hints), `undo`
-and `save game.txt`. Slots are numbered 1..N from the oldest card. Full syntax is in
-`hanabi_meta/cli/game_file.py`. A saved game file can be reloaded later or turned
-into a test case.
+### 1. Start it
 
-Scoring weights live in `advisor.Weights`, and each recommendation lists the reasons
-behind its score.
+```powershell
+.venv\Scripts\python -m hanabi_meta.cli
+```
 
-To record a live game, type `log games.jsonl` in the CLI. It appends the game, with
-your view and the advisor's suggestions on each of your turns. The format is in
-[docs/LOG_FORMAT.md](docs/LOG_FORMAT.md).
+### 2. Set up the table (once, after the deal)
+
+Number the players 0, 1, 2, … in turn order. Type each hand **oldest to newest**
+(left to right). Card letters: R Y G B W, and M for rainbow. Don't type your own
+hand; it's unknown.
+
+```
+variant regular          # regular | rainbow | rainbow_all_colors | short_rainbow
+players 4
+me 0
+hand 1 R4 B4 W3 Y3
+hand 2 G4 B3 R1 W4
+hand 3 G3 W5 B5 Y2
+```
+
+Joining mid-game? Also add `stacks Y1 R2`, `discards B2 R1`, `hints 5` and
+`strikes 1` as needed (defaults: empty stacks, 8 hints, 0 strikes).
+
+### 3. Type every action, in turn order
+
+Slots are numbered 1..N from the oldest card.
+
+| What happened | Type | Notes |
+|---|---|---|
+| Hint between other players | `hint 2 1 yellow` | giver, target, value; touched cards are worked out |
+| Number hint | `hint 2 1 3` | |
+| Hint to you | `hint 1 me 3 @1,4` | list which of your slots were touched |
+| Someone else plays / discards | `play 3 4 Y2 G1`, `discard 2 1 B2 R5` | player, slot, card, then the card they drew |
+| You play / discard | `play me 5 Y2`, `discard me 1 G2` | no drawn card: you can't see it |
+
+In `rainbow_all_colors` you can't hint rainbow; hint a color, which also touches
+rainbow cards. After each line it prints `ok` and how it read a hint, so you can
+check it against how the table read it.
+
+### 4. On your turn
+
+Type `advise` for ranked suggestions with reasons. `advise all` also lists the
+hints it rejected as misleading, and why.
+
+### Other commands
+
+| Command | Does |
+|---|---|
+| `show` | the table, what you know about each of your slots, pending convention plays |
+| `undo` | drop the last line (mistypes, or to fix a missed turn) |
+| `save game.txt` | save the game; reload with `.venv\Scripts\python -m hanabi_meta.cli game.txt` |
+| `log games.jsonl` | append the game to a JSONL log ([docs/LOG_FORMAT.md](docs/LOG_FORMAT.md)) |
+| `help`, `quit` | |
+
+Tips: turn order matters, since conventions read meaning from who acted when. If
+you miss a turn, `undo` back to it and retype. Typing each action together with
+the card drawn, right after the draw, keeps up best. Saved games where it misread
+a hint make good test cases.
+
+Full syntax is in `hanabi_meta/cli/game_file.py`. Scoring weights live in
+`advisor.Weights`, and each recommendation lists the reasons behind its score.
+
 
 ## Self-play
 
