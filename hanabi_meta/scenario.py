@@ -48,6 +48,9 @@ class Scenario:
     def hint(self, giver: int, target: int, value: str | int,
              touched: list[int] | None = None) -> "Scenario":
         kind, val = self._hint_value(value)
+        if kind == "color" and val not in self.variant.hint_colors:
+            raise ValueError(f"{self.variant.suits[val].name} cannot be hinted in "
+                             f"{self.variant.name}: use a color it is touched by")
         if touched is None:
             if target == self.bs.observer:
                 raise ValueError("hints to the observer need touched=[...]")

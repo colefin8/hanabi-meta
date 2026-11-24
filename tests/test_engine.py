@@ -210,3 +210,15 @@ def test_seeded_deck_is_reproducible():
     v = make_variant("rainbow", 3)
     assert Game(v, seed=42).initial_deck == Game(v, seed=42).initial_deck
     assert Game(v, seed=42).initial_deck != Game(v, seed=43).initial_deck
+
+
+def test_scenario_and_cli_refuse_rainbow_hint_in_all_colors_variant():
+    from hanabi_meta.cli.game_file import GameFile, GameFileError
+    gf = GameFile.parse("variant rainbow_all_colors\nplayers 2\nhand 1 M1 R2 Y3 G4 B5\n"
+                        "hint 0 1 rainbow\n")
+    with pytest.raises(GameFileError, match="cannot be hinted"):
+        gf.build()
+    # any color hint touches the rainbow card instead
+    t = GameFile.parse("variant rainbow_all_colors\nplayers 2\nhand 1 M1 R2 Y3 G4 B5\n"
+                       "hint 0 1 yellow\n").build()
+    assert t.bs.public.hands[1][0].touched and t.bs.public.hands[1][2].touched
