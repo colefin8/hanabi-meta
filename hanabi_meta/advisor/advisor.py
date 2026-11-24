@@ -54,6 +54,7 @@ class Weights:
     last_token_penalty: float = 10      # spending the last hint token
     collateral_penalty: float = 1       # per touched card the hint isn't about
     info_only: float = 5                # re-hinting already-hinted cards
+    info_tiebreak: float = 0.5          # per focus card, scaled by how much it narrows
     lookahead_depth: int = 3            # how many following players to simulate
     lookahead_crit: float = 80          # a teammate would be forced to discard a critical
     lookahead_misplay: float = 50       # a teammate would play a card that misses
@@ -152,8 +153,12 @@ def _plays(ms: MetaState, w: Weights) -> list[Recommendation]:
     bs, v, me = ms.bs, ms.variant, ms.observer
     expected = {e.expected.uid: e for e in ms.expected_of(me) if e.expected.uid is not None}
     out = []
+    hard = bs.view(me)  # hint information only, no convention inferences
+    last_strike = bs.strikes >= v.max_strikes - 1
     for sv in ms.view(me):
         a = Action.play(sv.slot)
+        if last_strike and not hard[sv.slot].certainly_playable:
+            continue  # on the last strike, only play what the hints prove
         cands = "/".join(sorted(v.card_str(c) for c in sv.candidates))
         reasons = []
         if sv.uid in expected:
@@ -164,6 +169,8 @@ def _plays(ms: MetaState, w: Weights) -> list[Recommendation]:
             if all(c.rank == 5 for c in sv.candidates):
                 score += w.play_five_bonus
                 reasons.append("a 5 returns a hint token")
+        elif sv.touched and _maybe_waiting(ms, sv):
+            continue  # a hinted card that may be waiting on a teammate's unlock
         elif sv.p_playable >= w.risky_min_p and bs.strikes < v.max_strikes - 1:
             score = w.risky_scale * sv.p_playable
             reasons.append(f"{sv.p_playable:.0%} playable ({cands}); risks a strike")
@@ -171,6 +178,52 @@ def _plays(ms: MetaState, w: Weights) -> list[Recommendation]:
             continue
         out.append(Recommendation(a, score, describe(v, a), reasons))
     return out
+
+
+def _maybe_waiting(ms: MetaState, sv) -> bool:
+    """True if some candidate is unplayable but its unlocks are visibly coming."""
+    from ..belief.bookkeeping import is_trash
+    from ..conventions.skip_level import locate_unlocks
+    bs = ms.bs
+    for c in sv.candidates:
+        if is_playable(c, bs.stacks) or is_trash(ms.variant, c, bs.stacks, bs.discards):
+            continue
+        _, missing = locate_unlocks(bs, c, giver=ms.observer)
+        if not missing:
+            return True
+    return False
+
+
+def _receiver_misreads(ms: MetaState, target: int, kind: str, value: int,
+                      touched: tuple[int, ...]) -> str | None:
+    """Read the hint from the receiver's side; describe a harmful misreading.
+
+    The receiver can't see their own hand but can see mine, which I can't. So
+    their view is approximated with both hands hidden (an unlock in my hand
+    can't be intended anyway). Earlier convention inferences aren't carried
+    over. If they would conclude "self skip-level" and blind-play their newest
+    card, that card must actually be playable.
+    """
+    from ..conventions.base import Expectation  # noqa: F401  (type context)
+    bs, v, me = ms.bs, ms.variant, ms.observer
+    tb = copy.deepcopy(bs)
+    tb.observer = target
+    tb.hands[target] = [None] * len(tb.hands[target])
+    tb.hands[me] = [None] * len(tb.hands[me])
+    tms = MetaState(tb)
+    tms.apply(HintEvent(me, target, kind, value, touched))
+    interp = tms.interpretations[-1]
+    real = bs.hands[target]
+    for e in interp.expectations:
+        cand = e.expected
+        if cand is None or cand.player != target or cand.how != "newest":
+            continue
+        slot = next(i for i, s in enumerate(tb.public.hands[target]) if s.uid == cand.uid)
+        card = real[slot]
+        if card is None or not is_playable(card, bs.stacks) or card not in e.options():
+            return (f"p{target} would read a self skip-level and blind-play their "
+                    f"newest card ({v.card_str(card) if card else '?'})")
+    return None
 
 
 # ---- discards -------------------------------------------------------------------
@@ -257,10 +310,16 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
 
     was_touched = {s.uid for s in bs.public.hands[target] if s.touched}
     if interp.focus and set(interp.focus) <= was_touched and             interp.kind is not HintKind.SAFETY_FIVE:
-        # Re-hinting cards that already carry a meaning only fills in detail;
-        # it does not start a new skip-level.
-        score = w.info_only
-        reasons.append("only adds detail to already-hinted cards")
+        # Re-hinting cards that already carry a meaning only fills in detail.
+        # Teammates would still read a skip-level into it (e.g. "green" on a
+        # saved G5), so only a plain play or trash reading is acceptable.
+        if interp.kind in (HintKind.PLAY, HintKind.TRASH):
+            score = w.info_only
+            reasons.append("only adds detail to already-hinted cards")
+        else:
+            rejected = True
+            reasons.append("misleading: re-hinting an already-hinted card would be read "
+                           f"as {interp.kind.value} (D3c)")
     elif interp.kind is HintKind.PLAY:
         new = [u for u in interp.focus
                if u not in already and not before[uid_to_slot[u]].certainly_playable]
@@ -296,9 +355,21 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
         rejected = True
         reasons.append("misleading: teammates would draw wrong conclusions (D3c)")
 
+    if not rejected:
+        problem = _receiver_misreads(ms, target, kind, value, touched)
+        if problem:
+            rejected = True
+            reasons.append(f"misleading: {problem} (D3c)")
+
     # A hint also makes non-focus cards collateral; flag a critical chop card that
     # stays unprotected only via the save branch above.
     focus_slots = {uid_to_slot[u] for u in interp.focus if u in uid_to_slot}
+    if not rejected and score > 0:
+        # Tie-break between hints with the same meaning: prefer the one that
+        # tells the receiver more (e.g. "rainbow" over "red" on a rainbow card).
+        score += w.info_tiebreak * sum(
+            1 - len(after[i].candidates) / max(1, len(before[i].candidates))
+            for i in focus_slots)
     extra = [i for i in touched if i not in focus_slots]
     if not rejected and extra and score > 0:
         score -= w.collateral_penalty * len(extra)  # prefer the cleaner hint

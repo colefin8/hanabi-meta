@@ -68,6 +68,21 @@ class GameFile:
 
     def build(self) -> Scenario:
         """Create the Scenario and replay every action."""
+        return self._build(None)
+
+    def to_log(self, players: list[str] | None = None):
+        """A GameRecorder holding this live game, from my point of view.
+
+        Each turn records the action, its events, my view before acting, and,
+        on my own turns, what the advisor suggested (so later we can compare
+        what we actually did with the advice, which is imitation-learning data).
+        """
+        from ..gamelog import GameRecorder
+        holder: dict = {}
+        self._build(holder, players)
+        return holder["rec"]
+
+    def _build(self, log: dict | None, players: list[str] | None = None) -> Scenario:
         opts: dict[str, str] = {}
         hands: dict[int, str] = {}
         for line in self.header:
@@ -98,11 +113,31 @@ class GameFile:
                      stacks=opts.get("stacks", ""), discards=opts.get("discards", ""),
                      hints=int(opts["hints"]) if "hints" in opts else None,
                      strikes=int(opts.get("strikes", "0")))
+        rec = None
+        if log is not None:
+            from ..advisor import advise
+            from ..gamelog import GameRecorder, view_to_json
+            rec = GameRecorder(t.variant, "live", observer=me, players=players,
+                               meta={"snapshot": list(self.header)})
+            log["rec"] = rec
         for i, line in enumerate(self.actions, 1):
             try:
+                if rec is not None:
+                    actor = self._player(line.split()[1], opts)
+                    before = len(t.bs.history)
+                    view = view_to_json(t.bs, t.ms.constraints())
+                    advice = None
+                    if actor == me:
+                        advice = [{"summary": r.summary, "action": r.action.to_dict(),
+                                   "score": round(r.score, 2)} for r in advise(t.ms)[:3]]
                 self._apply(t, line, opts)
+                if rec is not None:
+                    rec.turn(i - 1, actor, None, t.bs.history[before:],
+                             views={me: view}, advice=advice, note=line)
             except (ValueError, IndexError) as e:
                 raise GameFileError(f"action {i} '{line}': {e}") from e
+        if rec is not None:
+            rec.end(sum(t.bs.stacks), t.bs.strikes, len(self.actions), finished=False)
         return t
 
     @staticmethod

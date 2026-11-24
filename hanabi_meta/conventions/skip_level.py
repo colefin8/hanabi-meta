@@ -174,17 +174,19 @@ def _interpret_own(bs: BeliefState, hint: HintEvent, hint_index: int) -> Interpr
                 all_critical = False
     uids = [hand[i].uid for i in hint.touched]
     if explained:
-        interp = Interpretation(**base, kind=HintKind.PLAY, focus=list(explained),
-                                reason="my hinted card is playable now or once a "
-                                       "teammate plays a visible unlock")
+        ambiguous = any(uid in self_needed for uid in explained)
+        interp = Interpretation(
+            **base, kind=HintKind.PLAY, focus=list(explained),
+            reason="my hinted card is playable now or once a teammate plays a visible "
+                   "unlock" + (", or a self skip-level (unlock in my own newest card)"
+                               if ambiguous else ""))
         if len(hint.touched) == 1:
-            # Pruning: a Meta hinter would not hint this card if it were
-            # unexplainable, unless it is a save. 5s are saved with rank hints
-            # (safety hints), so a 5 here can only be a playable one.
-            uid = uids[0]
-            crit = {c for c in views[hint.touched[0]].candidates
-                    if is_critical(v, c, bs.stacks, bs.discards) and c.rank != 5}
-            interp.constraints[uid] = explained[uid] | crit
+            # Pruning: a hint never points at a trash card (that would be a
+            # trash hint). Self skip-level stays possible: the unlock may sit
+            # in my own newest card, which the hinter sees and I don't.
+            i = hint.touched[0]
+            interp.constraints[uids[0]] = {
+                c for c in views[i].candidates if not is_trash(v, c, bs.stacks, bs.discards)}
         return interp
     if self_needed and not all_critical:
         newest = [s for s in hand if not s.touched]

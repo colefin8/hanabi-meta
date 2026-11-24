@@ -17,7 +17,7 @@ python -m venv .venv; .venv\Scripts\python -m pip install pytest
 | M3 Skip-level + shotgun convention, convention layer (layer 4) | done, tested |
 | M4 Advisor (scoring, explanations, lookahead) and CLI | done, tested |
 | M5 Trash-hint, safety-swap, playable-5, protective-discard conventions | done, tested |
-| M6 JSONL logging + self-play harness | not started |
+| M6 JSONL logging + self-play harness | done, tested |
 | M7 (optional) HLE cross-check test for the regular variant | not started |
 
 ## Using the advisor
@@ -37,6 +37,25 @@ into a test case.
 Scoring weights live in `advisor.Weights`, and each recommendation lists the reasons
 behind its score.
 
+To record a live game, type `log games.jsonl` in the CLI. It appends the game, with
+your view and the advisor's suggestions on each of your turns. The format is in
+[docs/LOG_FORMAT.md](docs/LOG_FORMAT.md).
+
+## Self-play
+
+```powershell
+.venv\Scripts\python -m hanabi_meta.selfplay --variant all --players 2 3 4 5 --games 10
+.venv\Scripts\python -m hanabi_meta.selfplay --games 20 --log selfplay.jsonl --views
+```
+
+Every seat is a Meta agent that follows the advisor. The summary shows:
+- score and strikeouts;
+- hit/miss rates for plays that were certain, convention-inferred or risky;
+- which hint readings fired;
+- how expectations resolved.
+
+Run it after changing a convention or a weight, to catch regressions.
+
 ## Layout
 
 ```
@@ -52,8 +71,8 @@ hanabi_meta/
   advisor/       advisor.py: enumerate + score actions, simulate hints through the
                  conventions, reject misleading hints, look ahead at the next players
   cli/           game_file.py (text format), __main__.py (REPL and --advise)
-  gamelog/       (planned) JSONL writer/reader (named to avoid shadowing stdlib `logging`)
-  selfplay/      (planned) Meta agents that use the advisor; regression + convention stats
+  gamelog/       JSONL recorder/reader/replay (named to avoid shadowing stdlib `logging`)
+  selfplay/      Meta agents that use the advisor; regression + convention stats
 tests/
   test_engine.py, test_belief.py
   cases/         one file per convention of concrete table situations (see

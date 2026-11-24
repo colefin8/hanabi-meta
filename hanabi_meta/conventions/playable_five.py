@@ -13,6 +13,10 @@ Then, for each remaining rank of that color in order (stack+1 .. 5):
 
 Example: red at 4, nobody visibly holds R5 -> my newest card is R5.
 Example: red at 3, another player's newest is R5 -> my newest is R4.
+
+Limits (D10): only fires with the stack at MIN_STACK or higher (confirmed for
+4, 3 and 2). I only infer my own card if exactly one needed card is missing
+from what I can see.
 """
 from __future__ import annotations
 
@@ -22,6 +26,8 @@ from ..engine.actions import DiscardEvent, DrawEvent, HintEvent
 from ..engine.variant import Card
 from .base import (Candidate, Expectation, HintKind, Interpretation, playable_position,
                    stacks_after)
+
+MIN_STACK = 2
 
 
 def draw_recency(bs: BeliefState) -> list[int]:
@@ -50,6 +56,12 @@ def _infer(bs: BeliefState, hint: HintEvent, index: int) -> Interpretation:
     suit = hint.value
     height = bs.stacks[suit]
     needed = [Card(suit, r) for r in range(height + 1, 6)]
+    if height < MIN_STACK or not needed:
+        return Interpretation(
+            hint_index=index, giver=hint.giver, target=hint.target,
+            kind=HintKind.PLAYABLE_FIVE, focus=[],
+            reason=f"dead {v.suits[suit].name} hint discarded, but the stack is too low "
+                   f"for a playable-5 signal")
     excluded = {hint.giver, hint.target}
     recency = draw_recency(bs)
     can_hold = unseen_counts(v, bs.seen_by(bs.observer))
@@ -72,6 +84,11 @@ def _infer(bs: BeliefState, hint: HintEvent, index: int) -> Interpretation:
         if (not visible_anywhere and bs.observer not in excluded and can_hold[need] > 0):
             cands.append(Candidate(bs.observer, None, "inferred"))
         exps.append(Expectation(need, cands, f"playable-5 signal: {cs(need)}", index))
+    mine = [e for e in exps if e.candidates and e.candidates[-1].how == "inferred"
+            and len(e.candidates) == 1]
+    if len(mine) > 1:  # I'd need to hold several of them: too ambiguous to act on
+        for e in mine:
+            e.candidates = []
     name = v.suits[suit].name
     return Interpretation(
         hint_index=index, giver=hint.giver, target=hint.target, kind=HintKind.PLAYABLE_FIVE,

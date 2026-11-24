@@ -149,6 +149,28 @@ anyone to a wrong inference.
   skips flagged cards when choosing a discard. The lookahead does the same for
   teammates.
 
+### D11. Adjustments found by self-play (please sanity-check)
+- **No re-hint that carries a meaning:** hinting an already-hinted card again (e.g.
+  "green" on a saved G5) is rejected unless it reads as a plain play or trash hint.
+  Otherwise teammates read a skip-level into it.
+- **Check the receiver's reading:** before suggesting a hint, the advisor also reads
+  it from the receiver's side. If the receiver would conclude "self skip-level" and
+  blind-play a newest card that isn't playable, the hint is rejected.
+- **Hint to me:** my hinted card is only narrowed to "not trash". It can still be
+  waiting on a self skip-level. A hinted card that might be waiting on a teammate's
+  unlock is never blind-played.
+- **Playable 5:** needs the stack at 2+. With more than one card missing from my
+  view, I don't infer which I hold.
+- **Last strike:** only play what the hints prove. Convention-only inferences wait.
+
+### Self-play baseline (10-20 games each, so treat as rough)
+- Regular 3p: ~16-17 mean, 0 strikeouts.
+- Rainbow 3p: ~16.
+- 5p: ~15 after the last-strike guard.
+- Certain plays never miss.
+- Plays made on a convention hit only ~30-60%: the clearest area for real-game
+  examples.
+
 ## Still open
 
 O2. Engine rules. The linked PDF is scanned images I can't read here, so these use the

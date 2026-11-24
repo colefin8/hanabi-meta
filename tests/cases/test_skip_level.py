@@ -116,8 +116,10 @@ def test_waiting_on_an_earlier_unlock_is_not_declining():
     assert t.expected(0) == []
 
 
-def test_hint_to_me_narrowed_to_playable_or_visibly_unlocked():
+def test_hint_to_me_is_never_trash_and_keeps_self_skip_open():
     # p1 hints me yellow on slot 1. Yellow at 1. p2's newest is Y2.
+    # Y2 (playable), Y3 (p2's Y2 unlocks it) or Y4/Y5 (self skip-level: the
+    # unlock could be my own newest card). Never Y1 (trash).
     t = Scenario("regular", hands=[
         "? ? ? ? ?",
         "R4 B4 W3 G3 R3",
@@ -125,7 +127,7 @@ def test_hint_to_me_narrowed_to_playable_or_visibly_unlocked():
     ], stacks="Y1")
     t.hint(1, 0, "Y", touched=[1])
     assert t.last().kind is HintKind.PLAY
-    assert t.my_slot(1) == {"Y2", "Y3"}
+    assert t.my_slot(1) == {"Y2", "Y3", "Y4", "Y5"}
 
 
 def test_self_skip_level_on_my_own_hint():

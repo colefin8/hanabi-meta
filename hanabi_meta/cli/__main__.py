@@ -9,6 +9,7 @@ Interactive commands: any game-file line (see game_file.py), plus
     show           the table and what I know about my hand
     undo           drop the last action
     save PATH      write the game file
+    log PATH       append this game to a JSONL log (docs/LOG_FORMAT.md)
     help, quit
 """
 from __future__ import annotations
@@ -122,6 +123,16 @@ def repl(gf: GameFile, path: Path | None) -> None:
                 print(f"  undid: {gf.actions.pop()}")
             elif gf.header:
                 print(f"  undid: {gf.header.pop()}")
+        elif cmd == "log":
+            parts = line.split(maxsplit=1)
+            if len(parts) < 2:
+                print("  usage: log PATH")
+                continue
+            try:
+                gf.to_log().append_to(Path(parts[1]))
+                print(f"  appended to {parts[1]}")
+            except (GameFileError, ValueError) as e:
+                print(f"  {e}")
         elif cmd == "save":
             parts = line.split(maxsplit=1)
             target = Path(parts[1]) if len(parts) > 1 else path
