@@ -76,6 +76,37 @@ class BeliefState:
         self.deck_size = len(variant.deck())
         self.history: list[Event] = []
 
+    @classmethod
+    def from_snapshot(cls, variant: Variant, observer: int,
+                      hands: list[list[Card | None]], stacks: list[int],
+                      discards: list[Card] = (), hints: int | None = None,
+                      strikes: int = 0, deck_size: int | None = None) -> "BeliefState":
+        """Start mid-game from a table snapshot (for live use and test cases).
+
+        Slot info starts empty: hints given before the snapshot are not known.
+        The observer's own hand must be all None.
+        """
+        if any(c is not None for c in hands[observer]):
+            raise ValueError("observer's own cards must be unknown (None)")
+        bs = cls(variant, observer)
+        bs.stacks = list(stacks)
+        bs.discards = Counter(discards)
+        bs.hints = variant.max_hints if hints is None else hints
+        bs.strikes = strikes
+        for p, hand in enumerate(hands):
+            if p != observer and any(c is None for c in hand):
+                raise ValueError(f"player {p}'s cards must all be given")
+            for c in hand:
+                bs.hands[p].append(c)
+                bs.public.add_slot(p, 0)
+        if deck_size is None:
+            seen = played_cards(bs.stacks) + list(bs.discards.elements()) + \
+                [c for h in hands for c in h if c is not None]
+            deck_size = len(variant.deck()) - len(seen) - len(hands[observer])
+        bs.deck_size = deck_size
+        unseen_counts(variant, bs.seen_by(observer))  # raises if impossible
+        return bs
+
     # ---- event application --------------------------------------------------
     def apply(self, event: Event) -> None:
         v = self.variant
@@ -128,12 +159,23 @@ class BeliefState:
         return seen
 
     # ---- layer 3 -------------------------------------------------------------
-    def view(self, player: int) -> list[SlotView]:
-        """What `player` can deduce about each slot of their own hand."""
+    def view(self, player: int,
+             constraints: dict[int, set[Card]] | None = None) -> list[SlotView]:
+        """What `player` can deduce about each slot of their own hand.
+
+        `constraints` maps a slot uid to the identities a convention says it can
+        be (layer 4 inferences). A constraint that would leave no candidate is
+        ignored, since the hard information wins over convention guesses.
+        """
         v = self.variant
         unseen = unseen_counts(v, self.seen_by(player))
         slots = self.public.hands[player]
         cands = [{c for c in s.possible if unseen[c] > 0} for s in slots]
+        for i, s in enumerate(slots):
+            if constraints and s.uid in constraints:
+                narrowed = cands[i] & constraints[s.uid]
+                if narrowed:
+                    cands[i] = narrowed
         # Known-card elimination: if k slots are each certainly card X and only
         # k copies of X are unseen, X cannot be anywhere else in this hand.
         # Repeat until nothing changes (each pass can create new known cards).

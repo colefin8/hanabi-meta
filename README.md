@@ -14,9 +14,9 @@ python -m venv .venv; .venv\Scripts\python -m pip install pytest
 |---|---|
 | M1 Engine + variant config (all 4 variants, 2–5 players) | done, tested |
 | M2 Belief tracker layers 1–3 (bookkeeping, slot candidates, per-player views) | done, tested |
-| M3 Skip-level convention + hypothesis pruning (layer 4) | **blocked on the questions below** |
+| M3 Skip-level + shotgun convention, convention layer (layer 4) | done, tested |
 | M4 Advisor (scoring + explanations) and CLI | not started |
-| M5 Shotgun, safety-swap, playable-5 conventions | blocked on questions |
+| M5 Safety-swap, playable-5, protective-discard conventions | rules decided, not built |
 | M6 JSONL logging + self-play harness | not started |
 | M7 (optional) HLE cross-check test for the regular variant | not started |
 
@@ -27,18 +27,19 @@ hanabi_meta/
   engine/        variant.py (config), actions.py (actions + public events), game.py (rules)
   belief/        bookkeeping.py (L1), slots.py (L2), tracker.py (L3 views)
                  hypotheses.py (L4, planned): enumerate own-hand hypotheses, prune by conventions
-  conventions/   (planned) one module per convention: skip_level.py, shotgun.py,
-                 safety_swap.py, playable_five.py. Each exposes
-                   expected_actions(state, player) -> set of actions a Meta player would take
-                   on_action(state, event) -> updated expectations / inferences
+  conventions/   base.py (Interpretation, Expectation), skip_level.py (skip-level + shotgun),
+                 meta_state.py (MetaState: belief + interpretations + expectations, updated
+                 by what players did and did not do). Planned: safety_swap.py,
+                 playable_five.py, protective_discard.py
+  scenario.py    build a table situation from text, e.g. hands=["? ? ? ?", "R4 B4 W3 Y3"]
   advisor/       (planned) enumerate + score actions, human-readable explanation per action
   cli/           (planned) enter a state or an incremental action log, print recommendation
   gamelog/       (planned) JSONL writer/reader (named to avoid shadowing stdlib `logging`)
   selfplay/      (planned) Meta agents that use the advisor; regression + convention stats
 tests/
   test_engine.py, test_belief.py
-  cases/         (planned) one file per convention of concrete table situations, in a
-                 short text format, so adding a real game situation is a few lines
+  cases/         one file per convention of concrete table situations (see
+                 test_skip_level.py; copy a test to add a real game situation)
 ```
 
 ### Key design points

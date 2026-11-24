@@ -31,6 +31,27 @@ playable through a skip-level (or shotgun). There is no single focus card.
 - *Assumption: one card per turn, and cards are tracked as physical cards, so "the
   line" survives slots shifting as cards are played.*
 
+### D3b. Skip-level reading rules I chose (confirm with real examples)
+These fill gaps; each is one small, commented rule in `conventions/skip_level.py`.
+- **Collateral:** if a hint already has a meaning (some touched card is playable or
+  visibly unlocked), other touched cards are collateral, and nobody infers anything
+  about their own hand from them.
+- **Save beats self-skip:** if a touched card is critical and no unlock is visible, it
+  is read as a save, not as "I hold the unlock".
+- **Several unexplained touched cards:** read the hint as about the newest of them.
+- **Hint to me:** my hinted card is narrowed to "playable now", "unlocked by a card I
+  can see in a teammate's playable slot", or a critical non-5 (a save). If none of
+  those is possible, it's a self skip-level and my newest untouched card is narrowed
+  to the first missing unlock. 5s are left out because they are saved with rank hints.
+- **Who plays, in what order:** visible holders, in turn order after the hinter. I'm
+  always the last fallback, because a holder who declines can see my hand. A holder
+  only "declines" if the card was playable on their turn and they did something other
+  than play it, or than play a card they already knew was playable.
+- **Playable slot:** the newest card, a card the player's own info already identifies,
+  or a card below a run of cards that would each play in turn (the shotgun line).
+- **The hinter's own hand never holds the intended unlock,** since the hinter can't
+  see it.
+
 ### D4. Safety swap (on a "5" rank hint)
 - Everyone except the hint giver reverses their hand, including the hinted player.
 - Cards with positive info (touched by any hint) stay in place. Cards with only

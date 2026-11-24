@@ -1,0 +1,176 @@
+"""MetaState: a BeliefState plus the convention layer (layer 4).
+
+It keeps every hint's Interpretation and every pending Expectation, and updates
+them from what players did *and did not do* on their turns:
+
+* The expected player plays the expected slot: FULFILLED (or FAILED on a miss).
+* The expected player plays a different card their own info already said was
+  playable: still pending ("play on the information you already have first").
+* The expected player does anything else while the expected card is playable:
+  they declined, so the next candidate is expected. When it reaches the
+  observer, the observer's playable slot is narrowed to that card.
+* Anyone successfully playing the expected card fulfils it.
+
+`constraints()` turns pending expectations and interpretations into narrowing
+of the observer's own slots, which `view()` applies.
+"""
+from __future__ import annotations
+
+from ..belief.bookkeeping import is_playable
+from ..belief.tracker import BeliefState, SlotView
+from ..engine.actions import DiscardEvent, DrawEvent, Event, HintEvent, PlayEvent
+from ..engine.variant import Card, Variant
+from . import skip_level
+from .base import ExpStatus, Expectation, Interpretation
+
+
+class MetaState:
+    def __init__(self, bs: BeliefState) -> None:
+        self.bs = bs
+        self.interpretations: list[Interpretation] = []
+
+    @classmethod
+    def new(cls, variant: Variant, observer: int) -> "MetaState":
+        return cls(BeliefState(variant, observer))
+
+    @property
+    def variant(self) -> Variant:
+        return self.bs.variant
+
+    @property
+    def observer(self) -> int:
+        return self.bs.observer
+
+    @property
+    def expectations(self) -> list[Expectation]:
+        return [e for i in self.interpretations for e in i.expectations]
+
+    def pending(self) -> list[Expectation]:
+        return [e for e in self.expectations if e.status is ExpStatus.PENDING]
+
+    # ---- events ------------------------------------------------------------------
+    def apply(self, event: Event) -> None:
+        bs = self.bs
+        if isinstance(event, HintEvent):
+            self._actor_did_not_play(event.giver)
+            bs.apply(event)
+            interp = skip_level.interpret_hint(bs, event, len(self.interpretations))
+            self.interpretations.append(interp)
+        elif isinstance(event, (PlayEvent, DiscardEvent)):
+            uid = bs.public.hands[event.player][event.slot].uid
+            # "Known" = their own info says playable, or a convention told them to
+            # play this exact card (e.g. a plain play hint).
+            was_known_playable = bs.view(event.player)[event.slot].certainly_playable or any(
+                e.expected and e.expected.player == event.player and e.expected.uid == uid
+                for e in self.pending())
+            stacks_before = list(bs.stacks)
+            bs.apply(event)
+            if isinstance(event, PlayEvent):
+                self._on_play(event, uid, was_known_playable, stacks_before)
+            else:
+                self._actor_did_not_play(event.player, stacks_before)
+        elif isinstance(event, DrawEvent):
+            bs.apply(event)
+        else:
+            raise TypeError(event)
+        self._settle()
+
+    def apply_all(self, events: list[Event]) -> "MetaState":
+        for e in events:
+            self.apply(e)
+        return self
+
+    def _on_play(self, ev: PlayEvent, uid: int, was_known: bool,
+                 stacks_before: list[int]) -> None:
+        for e in self.pending():
+            cand = e.expected
+            if cand and cand.player == ev.player and cand.uid == uid:
+                ok = ev.success and ev.card in e.options()
+                e.status = ExpStatus.FULFILLED if ok else ExpStatus.FAILED
+                e.log.append(f"player {ev.player} played {self.variant.card_str(ev.card)}")
+            elif ev.success and e.card == ev.card:
+                e.status = ExpStatus.FULFILLED
+                e.log.append(f"{self.variant.card_str(ev.card)} played by player {ev.player}")
+            elif cand and cand.player == ev.player:
+                if was_known:
+                    e.log.append(f"player {ev.player} played known card first; still pending")
+                else:
+                    self._decline(e, ev.player, stacks_before)
+
+    def _actor_did_not_play(self, player: int, stacks: list[int] | None = None) -> None:
+        stacks = self.bs.stacks if stacks is None else stacks
+        for e in self.pending():
+            cand = e.expected
+            if cand and cand.player == player:
+                self._decline(e, player, stacks)
+
+    def _decline(self, e: Expectation, player: int, stacks: list[int]) -> None:
+        # Not playing a card that isn't playable yet is not a decline.
+        if e.card is not None and not is_playable(e.card, stacks):
+            return
+        e.current += 1
+        e.log.append(f"player {player} did not play it")
+
+    def _settle(self) -> None:
+        """Close expectations already satisfied; resolve the observer's slots."""
+        claimed: set[int] = set()
+        for e in self.pending():
+            if e.card is not None and self.bs.stacks[e.card.suit] >= e.card.rank:
+                e.status = ExpStatus.FULFILLED
+                continue
+            cand = e.expected
+            if cand is None:
+                continue
+            if cand.player == self.observer:
+                if cand.uid is None:
+                    cand.uid = self._observer_playable_slot(claimed)
+                    if cand.uid is not None:
+                        e.log.append("now expected of me")
+                if cand.uid is not None:
+                    claimed.add(cand.uid)
+            if cand.uid is not None and not any(
+                    s.uid == cand.uid for s in self.bs.public.hands[cand.player]):
+                e.current += 1  # the card left the hand some other way
+
+    def _observer_playable_slot(self, claimed: set[int]) -> int | None:
+        """Observer's newest untouched card not already claimed (shotgun line)."""
+        for s in reversed(self.bs.public.hands[self.observer]):
+            if not s.touched and s.uid not in claimed:
+                return s.uid
+        return None
+
+    # ---- outputs -------------------------------------------------------------------
+    def constraints(self) -> dict[int, set[Card]]:
+        out: dict[int, set[Card]] = {}
+
+        def add(uid: int, cards: set[Card]) -> None:
+            out[uid] = out[uid] & cards if uid in out and out[uid] & cards else set(cards)
+
+        for i in self.interpretations:
+            for uid, cards in i.constraints.items():
+                add(uid, cards)
+        for e in self.pending():
+            cand = e.expected
+            if cand and cand.player == self.observer and cand.uid is not None:
+                add(cand.uid, e.options())
+        return out
+
+    def view(self, player: int) -> list[SlotView]:
+        return self.bs.view(player, self.constraints() if player == self.observer else None)
+
+    def expected_of(self, player: int) -> list[Expectation]:
+        return [e for e in self.pending() if e.expected and e.expected.player == player]
+
+    def explain(self) -> list[str]:
+        cs = self.variant.card_str
+        lines = []
+        for i in self.interpretations:
+            lines.append(f"hint #{i.hint_index} (p{i.giver}->p{i.target}): "
+                         f"{i.kind.value}: {i.reason}")
+            for e in i.expectations:
+                who = e.expected
+                want = cs(e.card) if e.card else "/".join(sorted(cs(c) for c in e.possible))
+                state = e.status.value if who is None or e.status is not ExpStatus.PENDING \
+                    else f"expected of p{who.player} ({who.how})"
+                lines.append(f"    {want}: {state}")
+        return lines
