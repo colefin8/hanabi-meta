@@ -36,8 +36,8 @@ playable through a skip-level (or shotgun). There is no single focus card.
 - Cards with positive info (touched by any hint) stay in place. Cards with only
   negative info count as "no information" and are reversed. Their negative info goes
   with them.
-- *Assumed mechanics (please confirm, see O1):* the untouched cards reverse among the
-  slots they occupy, e.g. `a [b] c d e` becomes `e [b] d c a`.
+- Mechanics (confirmed): only cards without hints reverse, among the slots they
+  occupy. Hinted cards stay where they are: `a [b] c d e` becomes `e [b] d c a`.
 
 - Every "5" rank hint is a safety hint and triggers a swap, even on a playable 5 and
   even when it touches several 5s. Each new 5 hint triggers another swap.
@@ -53,7 +53,17 @@ playable through a skip-level (or shotgun). There is no single focus card.
 
 ### D6. Discarding
 - Discard your oldest card unless you can infer it is unsafe.
-- Protective discards: see O8 below, not yet modelled.
+- Protective discard (a signal to the NEXT player, P):
+  - The player directly before P in turn order could give a hint but discards instead.
+    Giving the hint would have left P with no hint token, and P would then have had to
+    discard their next-oldest card by convention. So the discard tells P that card is
+    unsafe too: P's oldest and second-oldest cards are both unsafe to discard.
+  - If the same thing happens again on the next round, P assumes their third-oldest
+    card is also unsafe, and so on.
+  - It only counts for a discard (never a play) by the player directly before P.
+  - *Open detail: does "could give a hint" mean any hint token was available, or that a
+    useful hint was visible? I'll assume a token was available and refine it with
+    examples.*
 
 ### D7. Inferring a playable 5 (dead color hint, then a discard)
 - Trigger: a player is color-hinted on a card that is clearly dead, and discards it,
@@ -66,10 +76,6 @@ playable through a skip-level (or shotgun). There is no single focus card.
   logic. They haven't come up in practice, but this is the assumption.
 
 ## Still open
-
-O1. Your answer said "everyone swaps all cards with positive information" and also
-"hinted cards stay in place." I've read it as swapping all cards *without* positive
-information. Is that right?
 
 O2. Engine rules. The linked PDF is scanned images I can't read here, so these use the
 standard rules and are config flags:
@@ -85,10 +91,3 @@ O3. Resolved. "Short rainbow" is variant 4 from the brief: a 6th suit with only 
 cards (two 1s, one each of 2-5). It matches "rainbow with only one 2, 3, and 4" from D5.
 *Assumed: it has its own rainbow hint and is touched by every color hint.* Tell me if
 it should be hinted only through colors, like variant 3.
-
-O8. Protective discards. My reading: player P has a known-unsafe oldest card (e.g. a
-save). Their second oldest is also unsafe, but P doesn't know that. Another player
-discards from their own hand to get a hint token back. Does that discard itself tell P
-"both your oldest and second oldest are unsafe"? Or does it just make room for someone
-to hint P? If it is a signal, who is it aimed at? Is it the next player to act after
-the discarder, or the player whose oldest card is known to be unsafe?
