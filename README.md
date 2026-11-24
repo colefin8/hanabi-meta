@@ -78,16 +78,7 @@ tests/
 * Dealing is player-major (player 0 gets the first cards). Only matters for replaying a
   known deck order.
 
-## Open questions (need answers before M3/M5)
+## Open questions
 
-See the session summary or the list below. Answers go here once decided.
-
-1. Variants: do the four readings above match your table, especially that `short_rainbow`
-   has its own rainbow hint and is touched by every color?
-2. Rules flags: empty ("you have no blue") hints, discarding at 8 tokens, strikeout = 0.
-3. Skip-level: definition of "playable on the information you already have".
-4. Skip-level: who is expected to act, and in what order.
-5. Shotgun: how far the receiver of the unlock goes down the line.
-6. Safety swap: scope of the reversal.
-7. Playable-5 inference: triggers and scope.
-8. Interaction between conventions and normal play/save hints.
+See [docs/QUESTIONS.md](docs/QUESTIONS.md). Answers will be recorded there and folded into
+the convention modules as they come in.
