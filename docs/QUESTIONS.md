@@ -39,6 +39,32 @@ playable through a skip-level (or shotgun). There is no single focus card.
 - *Assumed mechanics (please confirm, see O1):* the untouched cards reverse among the
   slots they occupy, e.g. `a [b] c d e` becomes `e [b] d c a`.
 
+- Every "5" rank hint is a safety hint and triggers a swap, even on a playable 5 and
+  even when it touches several 5s. Each new 5 hint triggers another swap.
+
+### D5. Saves (no swap)
+- Short rainbow (one copy each of rainbow 2, 3, 4): a hint on any of those can be a
+  save. It does not cause a swap.
+- Last copy of a card (every other copy discarded or misplayed): a save hint is
+  allowed. The hinter must make sure it can't be read as "playable" or as a skip-level.
+- *Implication for the advisor: a hint on a critical, non-playable card is read as a
+  save when no visible unlock exists and the card is critical. Skip-level wins when an
+  unlock is visible.* (to confirm with real examples)
+
+### D6. Discarding
+- Discard your oldest card unless you can infer it is unsafe.
+- Protective discards: see O8 below, not yet modelled.
+
+### D7. Inferring a playable 5 (dead color hint, then a discard)
+- Trigger: a player is color-hinted on a card that is clearly dead, and discards it,
+  usually on their very next turn. The discard is the signal. It says the discarder is
+  sure the card is safe: ranks 1-4 of that color are played, and they can see the 5.
+- Who plays: the player who most recently drew a new card and does not see that 5
+  anywhere else. They play their newest card.
+- Chain: stack at 3, you see another player's newest card is that 5, so you hold the 4
+  in your newest slot. Deeper chains (stack at 2, you see the 4 and 5) follow the same
+  logic. They haven't come up in practice, but this is the assumption.
+
 ## Still open
 
 O1. Your answer said "everyone swaps all cards with positive information" and also
@@ -55,26 +81,14 @@ standard rules and are config flags:
 
 Tell me if your table plays any of these differently.
 
-O3. Short rainbow: does it have its own "rainbow" hint, and is it touched by every
-color hint? *Assumed yes to both.*
+O3. Resolved. "Short rainbow" is variant 4 from the brief: a 6th suit with only six
+cards (two 1s, one each of 2-5). It matches "rainbow with only one 2, 3, and 4" from D5.
+*Assumed: it has its own rainbow hint and is touched by every color hint.* Tell me if
+it should be hinted only through colors, like variant 3.
 
-O4. Safety swap: is every "5" rank hint a safety hint, even on a playable 5? Is a color
-hint on a 5 never one? Does a second 5 hint reverse hands again?
-
-O5. Saves: apart from the 5 safety hint, are any hints saves (e.g. a 2, or the last copy
-of a card on someone's oldest slot)? Or is every hint on an unplayable card a skip-level
-or shotgun?
-
-O6. Discard slot: when you discard with no info, is it the oldest card overall or the
-oldest card with no hint on it?
-
-O7. Inferring a playable 5, as a worked example. Five players A-E. The red stack is at
-4 (R1-R4 played). A gives B a red hint on a card that is clearly dead, say a red 2. On
-B's next turn, B discards it. The convention says: assume A and B see all remaining red
-ranks on the board, so if the stack is at 4, assume your newest card is R5 and play it.
-- (a) Who plays the R5: C, D and E, in turn order? Is it the first of them who doesn't
-  see R5 in anyone else's hand? Could A or B themselves hold it?
-- (b) Does B have to discard it on their very next turn, or just at some point?
-- (c) With the stack at 3: if C sees D's newest card is R5, C infers C holds R4 in
-  their newest slot and plays it. Does that chain go further? For example, stack at 2,
-  C sees R4 and R5 in newest slots, so C holds R3?
+O8. Protective discards. My reading: player P has a known-unsafe oldest card (e.g. a
+save). Their second oldest is also unsafe, but P doesn't know that. Another player
+discards from their own hand to get a hint token back. Does that discard itself tell P
+"both your oldest and second oldest are unsafe"? Or does it just make room for someone
+to hint P? If it is a signal, who is it aimed at? Is it the next player to act after
+the discarder, or the player whose oldest card is known to be unsafe?
