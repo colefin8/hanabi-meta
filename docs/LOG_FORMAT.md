@@ -25,15 +25,16 @@ A game is `game_start`, then optionally `deal`, then `turn` records in order, th
 | `format_version` | `1` |
 | `game_id` | random id, repeated on every record of the game |
 | `time` | UTC ISO timestamp |
-| `source` | `"selfplay"` or `"live"` |
+| `source` | `"selfplay"`, `"live"` (a player's seat) or `"spectator"` (an outside observer who sees every hand) |
 | `variant` | full variant config (`Variant.to_dict()`): suits with copies and hint rules, players, hand size, rule flags |
-| `deck` | full deck order, index 0 drawn first (`null` for live games) |
+| `deck` | full deck order, index 0 drawn first (`null` for live games). Spectator games: the cards actually drawn, then the undrawn rest in arbitrary order |
+| `deck_known` | spectator games: how many leading `deck` cards were really seen (deal + draws) |
 | `seed` | shuffle seed if known |
 | `observer` | live games: whose point of view this is (`null` in self-play, which is omniscient) |
 | `players` | optional names |
-| `snapshot` | live games: the game-file header lines (starting table) |
+| `snapshot` | live and spectator games: the game-file header lines (starting table) |
 
-### `deal` (self-play only)
+### `deal` (self-play and spectator)
 `events`: the initial draws, as `draw` events.
 
 ### `turn`
@@ -42,9 +43,10 @@ A game is `game_start`, then optionally `deal`, then `turn` records in order, th
 | `turn`, `player` | turn number and who acted |
 | `action` | `{"type": "play"/"discard", "slot": n}` or `{"type": "hint_color"/"hint_rank", "target": p, "value": v}` (live games: `null`, see `note`) |
 | `events` | what happened, in order (below) |
-| `views_before` | `{seat: view}`: each seat's observation **before** the action (self-play with `--views`: every seat; live: the observer) |
-| `advice` | the advisor's top suggestions for the acting player (live games: only on the observer's own turns) |
-| `note` | live games: the line that was typed |
+| `views_before` | `{seat: view}`: each seat's observation **before** the action (self-play with `--views` and spectator: every seat; live: the observer) |
+| `advice` | the advisor's top 3 suggestions for the acting player, with `summary`, `action`, `score` and (self-play, spectator) `reasons` (live games: only on the observer's own turns) |
+| `advice_rank` | spectator games: where the action actually taken ranked in the advisor's list (0 = its first choice; `null` if it wasn't suggested at all) |
+| `note` | live and spectator games: the line that was typed |
 
 Events:
 ```json
@@ -65,11 +67,11 @@ A view:
 `own_candidates` already includes the convention inferences the player had made.
 
 ### `game_end`
-`score`, `strikes`, `turns`. Live games also have `"finished": false`, because a log
-can be written mid-game.
+`score`, `strikes`, `turns`. Live and spectator games also have `finished`, because a
+log can be written mid-game (live games: always `false`).
 
 ## Replaying
 
-`gamelog.replay(game)` re-runs a self-play game through the engine from its
-`deck` and checks every event and the final score. Live games can't be replayed
-(the deck order is unknown). Their action log rebuilds the observer's view instead.
+`gamelog.replay(game)` re-runs a self-play or spectator game through the engine
+from its `deck` and checks every event and the final score. Live games can't be
+replayed (the deck order is unknown). Their action log rebuilds the observer's view instead.

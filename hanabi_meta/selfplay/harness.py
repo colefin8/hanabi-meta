@@ -1,9 +1,7 @@
 """Self-play: Meta agents that use the advisor play full games.
 
-Each seat has its own MetaState (its own point of view) fed the masked public
-events. On its turn an agent takes the advisor's top recommendation. Safety-swap
-reorders are computed by the MetaStates and mirrored onto the engine's hands
-(see MetaState docstring: they must not be fed back in).
+Each seat has its own MetaState (its own point of view; see table.Table). On
+its turn an agent takes the advisor's top recommendation.
 
 Statistics are collected so convention regressions show up as numbers:
 score, strikes, which convention readings fired, how plays of each kind
@@ -20,11 +18,10 @@ from pathlib import Path
 
 from ..advisor import Weights, advise
 from ..conventions.base import ExpStatus
-from ..conventions.meta_state import MetaState
-from ..engine.actions import Action, ActionType, PlayEvent, mask_for
-from ..engine.game import Game
+from ..engine.actions import ActionType, PlayEvent
 from ..engine.variant import VARIANT_KINDS, Variant, make_variant
-from ..gamelog import GameRecorder, view_to_json
+from ..gamelog import GameRecorder
+from ..table import Table
 
 
 @dataclass
@@ -51,12 +48,8 @@ def _play_kind(reasons: list[str]) -> str:
 
 def play_game(variant: Variant, seed: int, weights: Weights | None = None,
               recorder_path: Path | None = None, log_views: bool = False) -> GameResult:
-    game = Game(variant, seed=seed)
-    n = variant.num_players
-    seats = [MetaState.new(variant, p) for p in range(n)]
-    for e in game.deal_events:
-        for p, ms in enumerate(seats):
-            ms.apply(mask_for(p, e))
+    table = Table(variant, seed=seed)
+    game, seats = table.game, table.seats
     rec = None
     if recorder_path:
         rec = GameRecorder(variant, "selfplay", deck=[variant.card_str(c)
@@ -68,8 +61,7 @@ def play_game(variant: Variant, seed: int, weights: Weights | None = None,
     while not game.is_over:
         p = game.current
         ms = seats[p]
-        views = ({q: view_to_json(seats[q].bs, seats[q].constraints()) for q in range(n)}
-                 if (rec and log_views) else None)
+        views = table.views() if (rec and log_views) else None
         recs = [r for r in advise(ms, weights) if game.check_legal(r.action) is None]
         if recs:
             choice = recs[0]
@@ -79,15 +71,7 @@ def play_game(variant: Variant, seed: int, weights: Weights | None = None,
             choice = None
             action = rng.choice(game.legal_actions())
         turn = game.turn
-        tr = game.step(action)
-        for e in list(tr.events):  # copy: reorder() appends to tr.events
-            reorders = []
-            for q, s in enumerate(seats):
-                s.apply(mask_for(q, e))
-                if q == 0:
-                    reorders = list(s.last_reorders)
-            for r in reorders:
-                game.reorder(r.player, r.order)
+        tr = table.step(action)
         if action.type is ActionType.PLAY and choice is not None:
             ev = next(e for e in tr.events if isinstance(e, PlayEvent))
             result.plays[(_play_kind(choice.reasons), "hit" if ev.success else "miss")] += 1

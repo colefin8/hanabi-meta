@@ -87,7 +87,7 @@ class GameRecorder:
     """Collects one game's records; `records()` gives them in file order."""
 
     variant: Variant
-    source: str                       # "selfplay" | "live"
+    source: str                       # "selfplay" | "live" | "spectator"
     deck: list[str] | None = None     # full deck order, index 0 drawn first
     seed: int | None = None
     observer: int | None = None       # live games: whose point of view
@@ -111,7 +111,7 @@ class GameRecorder:
 
     def turn(self, turn: int, player: int, action: Action | None, events: Iterable[Event],
              views: dict[int, dict] | None = None, advice: list[dict] | None = None,
-             note: str | None = None) -> None:
+             note: str | None = None, **extra: Any) -> None:
         rec: dict[str, Any] = {
             "type": "turn", "game_id": self.game_id, "turn": turn, "player": player,
             "action": action.to_dict() if action else None,
@@ -123,6 +123,7 @@ class GameRecorder:
             rec["advice"] = advice
         if note:
             rec["note"] = note
+        rec.update(extra)
         self._records.append(rec)
 
     def end(self, score: int, strikes: int, turns: int, **extra: Any) -> None:

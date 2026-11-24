@@ -21,6 +21,9 @@ saved game can be reloaded, shared, or turned into a test case.
 
 Slots are numbered 1..N from the oldest (left-most) card. Players are 0..N-1,
 and "me" works as a player name. Anything after "#" is a comment.
+
+Watching from outside the game? Put `spectator` in place of `me`: see
+cli/spectator.py.
 """
 from __future__ import annotations
 
@@ -29,7 +32,8 @@ from dataclasses import dataclass, field
 from ..engine.variant import make_variant
 from ..scenario import Scenario
 
-HEADER_KEYS = {"variant", "players", "me", "stacks", "discards", "hints", "strikes", "hand"}
+HEADER_KEYS = {"variant", "players", "me", "spectator", "stacks", "discards", "hints", "strikes",
+               "hand"}
 ACTION_KEYS = {"hint", "play", "discard"}
 
 
@@ -66,9 +70,20 @@ class GameFile:
     def text(self) -> str:
         return "\n".join(self.header + [""] + self.actions) + "\n"
 
+    @property
+    def spectator(self) -> bool:
+        return any(line.split()[0].lower() == "spectator" for line in self.header)
+
     def build(self) -> Scenario:
-        """Create the Scenario and replay every action."""
+        """Create the Scenario and replay every action (player mode)."""
+        if self.spectator:
+            raise GameFileError("this is a spectator game: use build_spectator()")
         return self._build(None)
+
+    def build_spectator(self):
+        """Run the whole game through the engine, with one view per seat."""
+        from .spectator import build
+        return build(self.header, self.actions)
 
     def to_log(self, players: list[str] | None = None):
         """A GameRecorder holding this live game, from my point of view.
@@ -77,9 +92,12 @@ class GameFile:
         on my own turns, what the advisor suggested (so later we can compare
         what we actually did with the advice, which is imitation-learning data).
         """
-        from ..gamelog import GameRecorder
         holder: dict = {}
-        self._build(holder, players)
+        if self.spectator:
+            from .spectator import build
+            build(self.header, self.actions, holder, players)
+        else:
+            self._build(holder, players)
         return holder["rec"]
 
     def _build(self, log: dict | None, players: list[str] | None = None) -> Scenario:

@@ -97,6 +97,36 @@ you miss a turn, `undo` back to it and retype. Typing each action together with
 the card drawn, right after the draw, keeps up best. Saved games where it misread
 a hint make good test cases.
 
+## Watching as a spectator
+
+Someone outside the game who can see every hand (standing behind the table, or
+watching an online game) can log it instead. That gives the best data: every
+turn records what the acting player could see, what the advisor would have done
+in their place, and what they actually did. Nobody playing has to type anything.
+
+Put `spectator` where `me` would go, list **every** hand as dealt, and give the
+drawn card on every play and discard. Number the players from whoever takes the
+first turn (player 0), in turn order. It must start from the deal.
+
+```
+variant regular
+players 3
+spectator
+hand 0 R4 Y1 G1 B1 W1
+hand 1 R2 Y2 G2 B2 R1
+hand 2 R3 Y3 G3 B3 W3
+
+hint 0 1 1                # no @slots: it works out which cards were touched
+play 1 5 R1 G4            # player, slot, card played, card drawn
+```
+
+Each line is checked against the full game, so typos and missed turns are caught
+right away ("it's p2's turn, not p0", "p1's slot 3 is G2, not B2"). After each
+hint it shows how the receiver reads it. `show` gives the table from the next
+player's seat, with each real card beside what that player knows about it;
+`advise` gives the advice for them. When the game ends, `log games.jsonl`. These
+logs include the deck order, so they can be replayed exactly.
+
 Full syntax is in `hanabi_meta/cli/game_file.py`. Scoring weights live in
 `advisor.Weights`, and each recommendation lists the reasons behind its score.
 
@@ -128,9 +158,11 @@ hanabi_meta/
                  by what players did and did not do), trash_hint.py, safety_swap.py,
                  playable_five.py, protective_discard.py
   scenario.py    build a table situation from text, e.g. hands=["? ? ? ?", "R4 B4 W3 Y3"]
+  table.py       engine game + one MetaState per seat (self-play and spectator mode)
   advisor/       advisor.py: enumerate + score actions, simulate hints through the
                  conventions, reject misleading hints, look ahead at the next players
-  cli/           game_file.py (text format), __main__.py (REPL and --advise)
+  cli/           game_file.py (text format), spectator.py (outside observer mode),
+                 __main__.py (REPL and --advise)
   gamelog/       JSONL recorder/reader/replay (named to avoid shadowing stdlib `logging`)
   selfplay/      Meta agents that use the advisor; regression + convention stats
 tests/
