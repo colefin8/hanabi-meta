@@ -31,8 +31,10 @@ playable through a skip-level (or shotgun). There is no single focus card.
 - *Assumption: one card per turn, and cards are tracked as physical cards, so "the
   line" survives slots shifting as cards are played.*
 
-### D3b. Skip-level reading rules I chose (confirm with real examples)
-These fill gaps; each is one small, commented rule in `conventions/skip_level.py`.
+### D3b. Skip-level reading rules
+Confirmed: collateral, save beats self-skip, several unexplained cards. The rest are
+my choices, to confirm with real examples. Each is one small, commented rule in
+`conventions/skip_level.py`.
 - **Collateral:** if a hint already has a meaning (some touched card is playable or
   visibly unlocked), other touched cards are collateral, and nobody infers anything
   about their own hand from them.
@@ -51,6 +53,13 @@ These fill gaps; each is one small, commented rule in `conventions/skip_level.py
   or a card below a run of cards that would each play in turn (the shotgun line).
 - **The hinter's own hand never holds the intended unlock,** since the hinter can't
   see it.
+
+### D3c. Don't give misleading hints
+Any hint on an unplayable card carries meaning under the Meta: teammates will infer
+an unlock in their own hands. A hint that doesn't mean that (e.g. "green" on a G4
+with nothing played) must not be given. **Advisor requirement:** before recommending
+a hint, run each teammate's interpretation of it and reject hints that would lead
+anyone to a wrong inference.
 
 ### D4. Safety swap (on a "5" rank hint)
 - Everyone except the hint giver reverses their hand, including the hinted player.
@@ -95,6 +104,22 @@ These fill gaps; each is one small, commented rule in `conventions/skip_level.py
 - Chain: stack at 3, you see another player's newest card is that 5, so you hold the 4
   in your newest slot. Deeper chains (stack at 2, you see the 4 and 5) follow the same
   logic. They haven't come up in practice, but this is the assumption.
+
+### D8. Trash hints ("safe to discard")
+- Sometimes the best hint tells a player which cards they can safely discard. Only
+  give it when the intent is unmistakable.
+- Examples:
+  - white when white is complete;
+  - 1s when every stack has its 1;
+  - yellow with yellow at 4 when the receiver can see Y5 in another hand.
+- Rule in code (`conventions/trash_hint.py`): a hint is a trash hint when, from the
+  receiver's view, every card it could touch is already trash.
+- Every "5" rank hint is still a safety hint first.
+- In the rainbow variants, a color hint also touches rainbow cards, so "white is
+  done" is only a trash hint if the rainbow cards it could touch are dead too.
+- The yellow example is also the playable-5 trigger (D7). If I can't see the Y5, I
+  can't be sure the receiver sees it, so I read the hint as DEAD (not obvious trash).
+  The playable-5 inference then waits for the receiver's discard.
 
 ## Still open
 

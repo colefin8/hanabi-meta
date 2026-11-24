@@ -20,7 +20,7 @@ from ..belief.bookkeeping import is_playable
 from ..belief.tracker import BeliefState, SlotView
 from ..engine.actions import DiscardEvent, DrawEvent, Event, HintEvent, PlayEvent
 from ..engine.variant import Card, Variant
-from . import skip_level
+from . import skip_level, trash_hint
 from .base import ExpStatus, Expectation, Interpretation
 
 
@@ -54,7 +54,11 @@ class MetaState:
         if isinstance(event, HintEvent):
             self._actor_did_not_play(event.giver)
             bs.apply(event)
-            interp = skip_level.interpret_hint(bs, event, len(self.interpretations))
+            idx = len(self.interpretations)
+            interp = None
+            if not (event.kind == "rank" and event.value == 5):  # every 5 hint = safety
+                interp = trash_hint.interpret_hint(bs, event, idx)
+            interp = interp or skip_level.interpret_hint(bs, event, idx)
             self.interpretations.append(interp)
         elif isinstance(event, (PlayEvent, DiscardEvent)):
             uid = bs.public.hands[event.player][event.slot].uid
