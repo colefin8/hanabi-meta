@@ -1,102 +1,80 @@
-# Open questions on the rules and the Meta
+# Rules and Meta: decisions and open questions
 
-My current assumption is in *italics*. Engine questions (A) are already config
-flags, so they block nothing. B–F block the convention layer.
+Decisions are what the convention modules implement. Each one should get at least
+one test case in `tests/cases/` built from a concrete table situation.
 
-## A. Variants and rules (engine, already flags)
+## Decided
 
-A1. Short rainbow: does it have its own "rainbow" hint, and is it touched by every
-color hint (like variant 2)? *Yes to both.*
+### D1. Which card a hint is about
+A hint is "about" every touched card that is either playable now or will become
+playable through a skip-level (or shotgun). There is no single focus card.
 
-A2. Can you give a hint that touches no cards ("you have no blue")? *No.*
+> Example: the yellow stack is at 1. Player A gets a yellow hint on an unplayable Y3.
+> Player B's newest card is Y2. The hint tells B that the Y2 is playable. B plays it,
+> which unlocks A's Y3.
 
-A3. Can you discard when all 8 hint tokens are available? *No.*
+### D2. Skip-level: who plays the unlock
+- The player expected to play the unlock is whoever looks around the table, sees that
+  nobody else visibly holds it, and so infers they hold it. They play it from their
+  "playable slot": the newest slot for a skip-level, or the line for a shotgun (D3).
+- "Play on the information you already have first" covers both readings. Play a card
+  you already know is playable, and play a card your existing info shows is the unlock.
+- If a player already had info showing that a card of theirs unlocks another player's
+  hinted card, they still play it. That is NOT a skip-level, because the info was
+  already there. The convention layer must not draw skip-level inferences from it.
 
-A4. Three strikes: does the score become 0, or do you keep the stacks? *0.*
+### D3. Shotgun
+- You recognize it the same way as a skip-level: the hint doesn't make sense given what
+  you can see, so you infer a skip-level or a shotgun aimed at you.
+- A shotgun is a multi-card skip-level. The player plays cards from newest to oldest
+  until they play the card that makes the triggering hint make sense.
+- *Assumption: one card per turn, and cards are tracked as physical cards, so "the
+  line" survives slots shifting as cards are played.*
 
-## B. Baseline hint meaning (the Meta lists only the special conventions)
+### D4. Safety swap (on a "5" rank hint)
+- Everyone except the hint giver reverses their hand, including the hinted player.
+- Cards with positive info (touched by any hint) stay in place. Cards with only
+  negative info count as "no information" and are reversed. Their negative info goes
+  with them.
+- *Assumed mechanics (please confirm, see O1):* the untouched cards reverse among the
+  slots they occupy, e.g. `a [b] c d e` becomes `e [b] d c a`.
 
-B1. Plain hints: what does a hint on a playable card mean? *Play it. If several touched
-cards are playable, play them from newest to oldest.*
+## Still open
 
-B2. When a hint touches several cards and only some are playable, which card is
-"the hinted card" for the skip-level/shotgun test? Is it the newest touched card, a
-newly touched card, or each touched card on its own?
+O1. Your answer said "everyone swaps all cards with positive information" and also
+"hinted cards stay in place." I've read it as swapping all cards *without* positive
+information. Is that right?
 
-B3. Saves: apart from the 5 safety hint, are there saves? For example, is a hint on
-the oldest (left-most) card that is a critical non-5 a save, or always a skip-level?
-How does a player tell a save from a skip-level?
+O2. Engine rules. The linked PDF is scanned images I can't read here, so these use the
+standard rules and are config flags:
+- a hint must touch at least one card;
+- no discarding with all 8 hint tokens available;
+- three strikes scores 0;
+- playing a 5 returns a token;
+- after the last draw, everyone, including the drawer, gets one more turn.
 
-B4. When hints are available and nothing is playable, must you hint, or may you
-discard your oldest card? Is the discard slot the oldest card overall or the oldest
-*untouched* card? *The oldest untouched card.*
+Tell me if your table plays any of these differently.
 
-## C. Skip-level
+O3. Short rainbow: does it have its own "rainbow" hint, and is it touched by every
+color hint? *Assumed yes to both.*
 
-C1. "Play on the information you already have first": does this mean (a) if you hold
-any card you already know is playable, play it, even if it isn't the unlock; or (b)
-if your existing info shows you hold the unlocking card, play that?
+O4. Safety swap: is every "5" rank hint a safety hint, even on a playable 5? Is a color
+hint on a 5 never one? Does a second 5 hint reverse hands again?
 
-C2. Who acts: if the unlock is in player X's newest slot, is X meant to play it blindly
-on X's next turn? Does the hint receiver just wait, holding the hinted card until it
-becomes playable?
+O5. Saves: apart from the 5 safety hint, are any hints saves (e.g. a 2, or the last copy
+of a card on someone's oldest slot)? Or is every hint on an unplayable card a skip-level
+or shotgun?
 
-C3. Multi-level (hinted 3 with the stack at 1): the 2 must be in someone's newest
-slot or in a slot with known info. Do the unlocks have to be played in turn order,
-or can they be played in any order as long as each is playable when played?
+O6. Discard slot: when you discard with no info, is it the oldest card overall or the
+oldest card with no hint on it?
 
-C4. "If two players have the unlock in their newest slot and the first doesn't play
-it": does "first" mean the first in turn order after the hinter?
-
-C5. What if a player who is expected to play an unlock gives a hint or discards
-instead? *The next candidate takes over, as in your two-player rule.*
-
-## D. Shotgun
-
-D1. How does a player know the shotgun is about *them* and not a skip-level to the
-receiver (self skip-level)? *If no visible newest-or-known slot unlocks the card, the
-next player in turn order assumes they hold several playable cards and starts from
-their newest.*
-
-D2. Over several turns, does the shotgunned player play newest, then the next newest,
-and so on, one card per turn until the unlock is played? Can teammates hint in between?
-
-D3. When the shotgunned player plays a card from their newest slot, slots shift. Is
-"down the line" counted on the hand as it was when the hint was given? *Yes, the
-cards are tracked as physical cards.*
-
-## E. Safety swap
-
-E1. Who reverses: every player, or everyone except the hinted player, or everyone
-except the hinter? *Every player except the hinter, who already sees all other hands.*
-
-E2. "Cards they have no information on": is a card that has only negative info (a
-hint that didn't touch it) uninformed? *Yes. Only cards touched by a hint keep their
-place.*
-
-E3. Mechanics: do the touched cards keep their slots while the untouched cards reverse
-among the remaining slots? Example: hand `a [b] c d e` with b touched becomes
-`e [b] d c a`?
-
-E4. Is any "5" rank hint a safety hint, including one on a playable 5? Is a color
-hint on a 5 never a safety hint?
-
-E5. Do people physically reorder their cards? Does a second 5 hint reverse again?
-
-## F. Inferring a playable 5
-
-F1. Trigger: the color-hinted card is already dead (that card was already played) and
-the receiver discards it on their next turn. Must it be the receiver's very next
-action? Does it count if the hinted card was dead for another reason (an earlier
-rank is gone)?
-
-F2. "The hinter and receiver see all remaining ranks of that color on the board": does
-this mean those players see the remaining cards of that color in other players' hands,
-so whoever cannot see the 5 (or the next needed card) assumes it is in their own newest
-slot?
-
-F3. Who is expected to play: everyone other than the hinter and receiver, in turn
-order, first one who can't see the card? Can the hinter or receiver themselves hold it?
-
-F4. Stack at 2 or lower: does the chain continue (you see 4 and 5 in newest slots, so
-you hold the 3)?
+O7. Inferring a playable 5, as a worked example. Five players A-E. The red stack is at
+4 (R1-R4 played). A gives B a red hint on a card that is clearly dead, say a red 2. On
+B's next turn, B discards it. The convention says: assume A and B see all remaining red
+ranks on the board, so if the stack is at 4, assume your newest card is R5 and play it.
+- (a) Who plays the R5: C, D and E, in turn order? Is it the first of them who doesn't
+  see R5 in anyone else's hand? Could A or B themselves hold it?
+- (b) Does B have to discard it on their very next turn, or just at some point?
+- (c) With the stack at 3: if C sees D's newest card is R5, C infers C holds R4 in
+  their newest slot and plays it. Does that chain go further? For example, stack at 2,
+  C sees R4 and R5 in newest slots, so C holds R3?
