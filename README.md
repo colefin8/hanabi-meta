@@ -1,4 +1,4 @@
-##VERY MUCH A WORK IN PROGRESS
+## VERY MUCH A WORK IN PROGRESS
 # hanabi-meta
 
 A live Hanabi advisor that reasons under **our group's conventions ("Meta")**,
