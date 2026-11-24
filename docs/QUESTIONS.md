@@ -121,6 +121,18 @@ anyone to a wrong inference.
   can't be sure the receiver sees it, so I read the hint as DEAD (not obvious trash).
   The playable-5 inference then waits for the receiver's discard.
 
+### D9. Look ahead before spending hints
+- Especially when hints are low, check what the next players would do after your
+  move. If you use the last hint and the next player would have to play or discard,
+  make sure what they'll do is safe. Then check the following two players the same
+  way.
+- Expected teammate policy: play if they can, else hint if a token exists, else
+  discard.
+- In code (`advisor.lookahead`): this simulates the next 3 players with that policy
+  and penalises actions that leave someone discarding a critical card or playing a
+  card that misses.
+- Approximation: stacks aren't advanced during the lookahead.
+
 ## Still open
 
 O2. Engine rules. The linked PDF is scanned images I can't read here, so these use the

@@ -122,7 +122,9 @@ def interpret_hint(bs: BeliefState, hint: HintEvent, hint_index: int) -> Interpr
                               reason=f"hint is about {names}")
 
     if unexplained:
-        saves = [u for u in unexplained if is_critical(v, u[1], bs.stacks, bs.discards)]
+        # 5s are saved with a rank hint (safety hint), never with a color hint.
+        saves = [u for u in unexplained if u[1].rank != 5
+                 and is_critical(v, u[1], bs.stacks, bs.discards)]
         if saves:
             return Interpretation(
                 **base, kind=HintKind.SAVE, focus=[u[0] for u in saves],

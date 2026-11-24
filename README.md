@@ -15,10 +15,27 @@ python -m venv .venv; .venv\Scripts\python -m pip install pytest
 | M1 Engine + variant config (all 4 variants, 2–5 players) | done, tested |
 | M2 Belief tracker layers 1–3 (bookkeeping, slot candidates, per-player views) | done, tested |
 | M3 Skip-level + shotgun convention, convention layer (layer 4) | done, tested |
-| M4 Advisor (scoring + explanations) and CLI | not started |
+| M4 Advisor (scoring, explanations, lookahead) and CLI | done, tested |
 | M5 Safety-swap, playable-5, protective-discard conventions | rules decided, not built |
 | M6 JSONL logging + self-play harness | not started |
 | M7 (optional) HLE cross-check test for the regular variant | not started |
+
+## Using the advisor
+
+```powershell
+.venv\Scripts\python -m hanabi_meta.cli examples\skip_level.txt --advise
+.venv\Scripts\python -m hanabi_meta.cli            # interactive: type the game as it happens
+```
+
+In interactive mode, type game-file lines (`players 4`, `hand 1 R4 B4 W3 Y3`,
+`hint 2 1 yellow`, `hint 1 me 3 @1,4`, `play 3 4 Y2 G1`, `discard me 1 G2`). You can
+also use `show`, `advise`, `advise all` (also lists rejected misleading hints), `undo`
+and `save game.txt`. Slots are numbered 1..N from the oldest card. Full syntax is in
+`hanabi_meta/cli/game_file.py`. A saved game file can be reloaded later or turned
+into a test case.
+
+Scoring weights live in `advisor.Weights`, and each recommendation lists the reasons
+behind its score.
 
 ## Layout
 
@@ -32,8 +49,9 @@ hanabi_meta/
                  by what players did and did not do). Planned: safety_swap.py,
                  playable_five.py, protective_discard.py
   scenario.py    build a table situation from text, e.g. hands=["? ? ? ?", "R4 B4 W3 Y3"]
-  advisor/       (planned) enumerate + score actions, human-readable explanation per action
-  cli/           (planned) enter a state or an incremental action log, print recommendation
+  advisor/       advisor.py: enumerate + score actions, simulate hints through the
+                 conventions, reject misleading hints, look ahead at the next players
+  cli/           game_file.py (text format), __main__.py (REPL and --advise)
   gamelog/       (planned) JSONL writer/reader (named to avoid shadowing stdlib `logging`)
   selfplay/      (planned) Meta agents that use the advisor; regression + convention stats
 tests/

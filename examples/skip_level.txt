@@ -1,0 +1,12 @@
+# Your Y3 / Y2 example. I'm p0. Yellow is at 1.
+variant regular
+players 4
+me 0
+stacks Y1
+hand 1 R4 B4 W3 Y3
+hand 2 G4 B3 R1 W4
+hand 3 G3 W5 B5 Y2
+
+hint 2 1 yellow        # p2 hints p1's Y3: p3's newest Y2 is playable
+hint 3 2 red           # p3 gives a hint instead of playing Y2 ...
+                       # ... so p3 must see Y2 in MY newest slot
