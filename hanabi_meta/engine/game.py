@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 from .actions import (Action, ActionType, DiscardEvent, DrawEvent, Event, HintEvent,
-                      PlayEvent, mask_for)
+                      PlayEvent, ReorderEvent, mask_for)
 from .variant import Card, Variant
 
 
@@ -168,6 +168,17 @@ class Game:
         self.turn += 1
         self.current = (p + 1) % self.num_players
         return rec
+
+    def reorder(self, player: int, order: tuple[int, ...]) -> ReorderEvent:
+        """Physically rearrange a hand (between turns). Recorded in the last turn."""
+        hand = self.hands[player]
+        if sorted(order) != list(range(len(hand))):
+            raise IllegalAction("order must be a permutation of the hand")
+        self.hands[player] = [hand[i] for i in order]
+        ev = ReorderEvent(player, tuple(order))
+        if self.history:
+            self.history[-1].events.append(ev)
+        return ev
 
     # ---- observer helpers -----------------------------------------------------
     def events_for(self, observer: int) -> list[Event]:

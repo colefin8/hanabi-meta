@@ -16,7 +16,8 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
-from ..engine.actions import DiscardEvent, DrawEvent, Event, HintEvent, PlayEvent
+from ..engine.actions import (DiscardEvent, DrawEvent, Event, HintEvent, PlayEvent,
+                              ReorderEvent)
 from ..engine.variant import Card, Variant
 from .bookkeeping import is_critical, is_playable, is_trash, played_cards, unseen_counts
 from .slots import PublicKnowledge
@@ -117,6 +118,10 @@ class BeliefState:
                 None if event.player == self.observer else event.card)
             self.public.add_slot(event.player, self.turn)
             self.deck_size -= 1
+        elif isinstance(event, ReorderEvent):
+            self.public.permute(event.player, list(event.order))
+            hand = self.hands[event.player]
+            self.hands[event.player] = [hand[i] for i in event.order]
         elif isinstance(event, HintEvent):
             self.public.apply_hint(event)
             self.hints -= 1

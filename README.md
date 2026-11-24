@@ -16,7 +16,7 @@ python -m venv .venv; .venv\Scripts\python -m pip install pytest
 | M2 Belief tracker layers 1–3 (bookkeeping, slot candidates, per-player views) | done, tested |
 | M3 Skip-level + shotgun convention, convention layer (layer 4) | done, tested |
 | M4 Advisor (scoring, explanations, lookahead) and CLI | done, tested |
-| M5 Safety-swap, playable-5, protective-discard conventions | rules decided, not built |
+| M5 Trash-hint, safety-swap, playable-5, protective-discard conventions | done, tested |
 | M6 JSONL logging + self-play harness | not started |
 | M7 (optional) HLE cross-check test for the regular variant | not started |
 
@@ -46,7 +46,7 @@ hanabi_meta/
                  hypotheses.py (L4, planned): enumerate own-hand hypotheses, prune by conventions
   conventions/   base.py (Interpretation, Expectation), skip_level.py (skip-level + shotgun),
                  meta_state.py (MetaState: belief + interpretations + expectations, updated
-                 by what players did and did not do). Planned: safety_swap.py,
+                 by what players did and did not do), trash_hint.py, safety_swap.py,
                  playable_five.py, protective_discard.py
   scenario.py    build a table situation from text, e.g. hands=["? ? ? ?", "R4 B4 W3 Y3"]
   advisor/       advisor.py: enumerate + score actions, simulate hints through the

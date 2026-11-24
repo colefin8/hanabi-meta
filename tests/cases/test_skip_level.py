@@ -208,7 +208,9 @@ def test_meta_state_survives_random_games_in_every_variant():
             ms.apply_all([mask_for(0, e) for e in g.deal_events])
             while not g.is_over:
                 rec = g.step(rng.choice(g.legal_actions()))
-                for e in rec.events:
+                for e in list(rec.events):       # copy: reorder() appends to it
                     ms.apply(mask_for(0, e))
+                    for r in ms.last_reorders:   # keep the engine's hands in step
+                        g.reorder(r.player, r.order)
                 ms.view(0)
                 ms.explain()

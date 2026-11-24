@@ -133,6 +133,22 @@ anyone to a wrong inference.
   card that misses.
 - Approximation: stacks aren't advanced during the lookahead.
 
+### D10. How the later conventions are modelled (confirm with real examples)
+- **Safety swap:** the tool reverses hands itself right after any 5 hint. In the CLI,
+  `show` displays teammates' hands in their new order, and later `play`/`discard` slot
+  numbers refer to that new order. Expectations follow the card, not the slot. So if
+  a skip-level expected p3's newest card and a 5 hint then reverses p3's hand, the
+  tool still expects that same card, which is now somewhere else.
+- **Playable 5:** a color hint read as trash/dead, then the receiver discards that
+  card (at any later point, not only on their next turn). Remaining ranks are
+  expected in order. Visible holders are ordered by who drew most recently. I'm the
+  fallback only if I can't see the card anywhere.
+- **Protective discard:** triggers only when exactly 1 hint token was available
+  before the discard, and only for the player directly after the discarder. It marks
+  that player's chop (oldest card with no hint and no flag) as unsafe. The advisor
+  skips flagged cards when choosing a discard. The lookahead does the same for
+  teammates.
+
 ## Still open
 
 O2. Engine rules. The linked PDF is scanned images I can't read here, so these use the

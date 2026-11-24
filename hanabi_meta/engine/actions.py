@@ -97,7 +97,18 @@ class DrawEvent:
     card: Card | None  # None when the observer cannot see it (their own draw)
 
 
-Event = Union[HintEvent, PlayEvent, DiscardEvent, DrawEvent]
+@dataclass(frozen=True)
+class ReorderEvent:
+    """A player physically rearranges their hand: new_hand[i] = old_hand[order[i]].
+
+    Not a turn. Our Meta's safety swap (reverse your un-hinted cards after a 5
+    hint) is the only source of these.
+    """
+    player: int
+    order: tuple[int, ...]
+
+
+Event = Union[HintEvent, PlayEvent, DiscardEvent, DrawEvent, ReorderEvent]
 
 
 def mask_for(observer: int, event: Event) -> Event:

@@ -80,9 +80,10 @@ def describe(v: Variant, a: Action, me: int | None = None) -> str:
 
 
 def chop_index(ms: MetaState, player: int) -> int | None:
-    """Oldest untouched slot: the card this player discards next (D6)."""
+    """The card this player discards next (D6): their oldest card with no hint
+    on it that no convention has flagged as unsafe (protective discard)."""
     for i, s in enumerate(ms.bs.public.hands[player]):
-        if not s.touched:
+        if not s.touched and s.uid not in ms.unsafe:
             return i
     return None
 
@@ -188,13 +189,22 @@ def _discards(ms: MetaState, w: Weights) -> list[Recommendation]:
                                   describe(v, a), ["known trash: safe discard",
                                                    f"regains a hint ({bs.hints} now)"]))
     chop = chop_index(ms, me)
+    if chop is None and not trash:
+        a = Action.discard(0)
+        out.append(Recommendation(a, w.discard_base + token_bonus - w.discard_crit_penalty,
+                                  describe(v, a), ["every card is hinted or flagged "
+                                                   "unsafe: oldest card as a last resort"]))
     if chop is not None and not (trash and trash[0].slot == chop):
         sv = views[chop]
         a = Action.discard(chop)
         score = (w.discard_base + token_bonus - w.discard_crit_penalty * sv.p_critical
                  - w.discard_playable_penalty * sv.p_playable)
-        reasons = ["oldest untouched card (default discard)",
+        reasons = ["oldest un-hinted card (default discard)",
                    f"regains a hint ({bs.hints} now)"]
+        skipped = [s for s in bs.public.hands[me][:chop] if s.uid in ms.unsafe]
+        if skipped:
+            reasons.append(f"skips {len(skipped)} card(s) flagged unsafe by a "
+                           f"protective discard")
         if sv.p_critical:
             reasons.append(f"{sv.p_critical:.0%} chance it is critical")
         if sv.p_playable:

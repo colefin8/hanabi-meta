@@ -28,6 +28,7 @@ class HintKind(str, Enum):
     SAVE = "save"              # critical card, no visible unlock
     SAFETY_FIVE = "safety_five"
     TRASH = "trash"            # unmistakable "safe to discard" hint
+    PLAYABLE_FIVE = "playable_five"  # dead color hint + discard (not a hint itself)
     DEAD = "dead"              # touched card is trash, but not obviously to the receiver
     UNCLEAR = "unclear"
 

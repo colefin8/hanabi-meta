@@ -13,14 +13,23 @@ them from what players did *and did not do* on their turns:
 
 `constraints()` turns pending expectations and interpretations into narrowing
 of the observer's own slots, which `view()` applies.
+
+Other conventions handled here:
+* safety swap: after every 5 hint, MetaState itself reverses the un-hinted
+  cards of everyone but the giver. A harness driving the engine must reorder the
+  engine's hands too (Game.reorder) but must NOT also feed those ReorderEvents
+  back in, or the swap would happen twice.
+* playable 5: after the receiver of a dead color hint discards that card.
+* protective discard: flags the next player's chop as unsafe (`unsafe`).
 """
 from __future__ import annotations
 
 from ..belief.bookkeeping import is_playable
 from ..belief.tracker import BeliefState, SlotView
-from ..engine.actions import DiscardEvent, DrawEvent, Event, HintEvent, PlayEvent
+from ..engine.actions import (DiscardEvent, DrawEvent, Event, HintEvent, PlayEvent,
+                              ReorderEvent)
 from ..engine.variant import Card, Variant
-from . import skip_level, trash_hint
+from . import playable_five, protective_discard, safety_swap, skip_level, trash_hint
 from .base import ExpStatus, Expectation, Interpretation
 
 
@@ -28,6 +37,13 @@ class MetaState:
     def __init__(self, bs: BeliefState) -> None:
         self.bs = bs
         self.interpretations: list[Interpretation] = []
+        #: The hint behind each interpretation (None for non-hint signals).
+        self.hint_events: list[HintEvent | None] = []
+        #: uids of cards known (by convention) to be unsafe to discard.
+        self.unsafe: set[int] = set()
+        self.notes: list[str] = []
+        #: Safety-swap reorders caused by the last event (for engine harnesses).
+        self.last_reorders: list[ReorderEvent] = []
 
     @classmethod
     def new(cls, variant: Variant, observer: int) -> "MetaState":
@@ -51,6 +67,7 @@ class MetaState:
     # ---- events ------------------------------------------------------------------
     def apply(self, event: Event) -> None:
         bs = self.bs
+        self.last_reorders = []
         if isinstance(event, HintEvent):
             self._actor_did_not_play(event.giver)
             bs.apply(event)
@@ -60,6 +77,13 @@ class MetaState:
                 interp = trash_hint.interpret_hint(bs, event, idx)
             interp = interp or skip_level.interpret_hint(bs, event, idx)
             self.interpretations.append(interp)
+            self.hint_events.append(event)
+            if safety_swap.is_safety_hint(event):
+                for r in safety_swap.reorders(bs, event):
+                    bs.apply(r)
+                    self.last_reorders.append(r)
+                interp.reason += (f"; everyone but p{event.giver} reversed their "
+                                  f"un-hinted cards")
         elif isinstance(event, (PlayEvent, DiscardEvent)):
             uid = bs.public.hands[event.player][event.slot].uid
             # "Known" = their own info says playable, or a convention told them to
@@ -68,12 +92,14 @@ class MetaState:
                 e.expected and e.expected.player == event.player and e.expected.uid == uid
                 for e in self.pending())
             stacks_before = list(bs.stacks)
+            hints_before = bs.hints
             bs.apply(event)
             if isinstance(event, PlayEvent):
                 self._on_play(event, uid, was_known_playable, stacks_before)
             else:
                 self._actor_did_not_play(event.player, stacks_before)
-        elif isinstance(event, DrawEvent):
+                self._on_discard(event, uid, hints_before)
+        elif isinstance(event, (DrawEvent, ReorderEvent)):
             bs.apply(event)
         else:
             raise TypeError(event)
@@ -100,6 +126,22 @@ class MetaState:
                     e.log.append(f"player {ev.player} played known card first; still pending")
                 else:
                     self._decline(e, ev.player, stacks_before)
+
+    def _on_discard(self, ev: DiscardEvent, uid: int, hints_before: int) -> None:
+        self.unsafe.discard(uid)
+        interp = playable_five.on_discard(self.bs, self.interpretations, self.hint_events,
+                                          ev, uid, len(self.interpretations))
+        if interp:
+            self.interpretations.append(interp)
+            self.hint_events.append(None)
+        if protective_discard.is_protective(self.bs, ev, hints_before):
+            flagged = protective_discard.flag(self.bs, ev, self.unsafe)
+            if flagged is not None:
+                p = (ev.player + 1) % self.variant.num_players
+                slot = next(i for i, s in enumerate(self.bs.public.hands[p])
+                            if s.uid == flagged)
+                self.notes.append(f"protective discard by p{ev.player}: p{p}'s slot "
+                                  f"{slot + 1} is unsafe to discard")
 
     def _actor_did_not_play(self, player: int, stacks: list[int] | None = None) -> None:
         stacks = self.bs.stacks if stacks is None else stacks
@@ -169,7 +211,8 @@ class MetaState:
         cs = self.variant.card_str
         lines = []
         for i in self.interpretations:
-            lines.append(f"hint #{i.hint_index} (p{i.giver}->p{i.target}): "
+            label = "signal" if i.kind.value == "playable_five" else "hint"
+            lines.append(f"{label} #{i.hint_index} (p{i.giver}->p{i.target}): "
                          f"{i.kind.value}: {i.reason}")
             for e in i.expectations:
                 who = e.expected
@@ -177,4 +220,5 @@ class MetaState:
                 state = e.status.value if who is None or e.status is not ExpStatus.PENDING \
                     else f"expected of p{who.player} ({who.how})"
                 lines.append(f"    {want}: {state}")
+        lines += self.notes
         return lines
