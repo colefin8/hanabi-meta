@@ -23,7 +23,8 @@ from .engine.variant import Card, make_variant
 class Scenario:
     def __init__(self, variant: str, hands: list[str], observer: int = 0,
                  stacks: str = "", discards: str = "", hints: int | None = None,
-                 strikes: int = 0, **variant_overrides) -> None:
+                 strikes: int = 0, deck_size: int | None = None,
+                 turns_left: int | None = None, **variant_overrides) -> None:
         self.variant = make_variant(variant, len(hands), **variant_overrides)
         v = self.variant
         parsed: list[list[Card | None]] = [
@@ -34,7 +35,7 @@ class Scenario:
             heights[c.suit] = c.rank
         disc = [v.parse_card(t) for t in discards.split()]
         self.ms = MetaState(BeliefState.from_snapshot(
-            v, observer, parsed, heights, disc, hints, strikes))
+            v, observer, parsed, heights, disc, hints, strikes, deck_size, turns_left))
 
     @property
     def bs(self) -> BeliefState:

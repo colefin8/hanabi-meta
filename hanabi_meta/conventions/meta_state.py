@@ -6,6 +6,9 @@ them from what players did *and did not do* on their turns:
 * The expected player plays the expected slot: FULFILLED (or FAILED on a miss).
 * The expected player plays a different card their own info already said was
   playable: still pending ("play on the information you already have first").
+* The expected player gives an urgent save (a hint read as a save or a 5
+  safety hint): the play is only delayed. That turn doesn't count as
+  declining; the next turn they don't play it does.
 * The expected player does anything else while the expected card is playable:
   they declined, so the next candidate is expected. When it reaches the
   observer, the observer's playable slot is narrowed to that card.
@@ -30,7 +33,7 @@ from ..engine.actions import (DiscardEvent, DrawEvent, Event, HintEvent, PlayEve
                               ReorderEvent)
 from ..engine.variant import Card, Variant
 from . import playable_five, protective_discard, safety_swap, skip_level, trash_hint
-from .base import ExpStatus, Expectation, Interpretation
+from .base import ExpStatus, Expectation, HintKind, Interpretation
 
 
 class MetaState:
@@ -69,13 +72,15 @@ class MetaState:
         bs = self.bs
         self.last_reorders = []
         if isinstance(event, HintEvent):
-            self._actor_did_not_play(event.giver)
+            stacks_before = list(bs.stacks)
             bs.apply(event)
             idx = len(self.interpretations)
             interp = None
             if not (event.kind == "rank" and event.value == 5):  # every 5 hint = safety
                 interp = trash_hint.interpret_hint(bs, event, idx)
             interp = interp or skip_level.interpret_hint(bs, event, idx)
+            urgent = interp.kind in (HintKind.SAVE, HintKind.SAFETY_FIVE)
+            self._actor_did_not_play(event.giver, stacks_before, excuse=urgent)
             self.interpretations.append(interp)
             self.hint_events.append(event)
             if safety_swap.is_safety_hint(event):
@@ -118,6 +123,10 @@ class MetaState:
                 ok = ev.success and ev.card in e.options()
                 e.status = ExpStatus.FULFILLED if ok else ExpStatus.FAILED
                 e.log.append(f"player {ev.player} played {self.variant.card_str(ev.card)}")
+                if ok and e.self_hint:
+                    interp = self.interpretations[e.source_hint]
+                    interp.expectations += skip_level.continue_self_shotgun(
+                        self.bs, interp, e, ev.card)
             elif ev.success and e.card == ev.card:
                 e.status = ExpStatus.FULFILLED
                 e.log.append(f"{self.variant.card_str(ev.card)} played by player {ev.player}")
@@ -143,11 +152,16 @@ class MetaState:
                 self.notes.append(f"protective discard by p{ev.player}: p{p}'s slot "
                                   f"{slot + 1} is unsafe to discard")
 
-    def _actor_did_not_play(self, player: int, stacks: list[int] | None = None) -> None:
+    def _actor_did_not_play(self, player: int, stacks: list[int] | None = None,
+                            excuse: bool = False) -> None:
         stacks = self.bs.stacks if stacks is None else stacks
         for e in self.pending():
             cand = e.expected
             if cand and cand.player == player:
+                if excuse and (e.card is None or is_playable(e.card, stacks)):
+                    e.excused += 1
+                    e.log.append(f"player {player} gave an urgent save; play delayed")
+                    continue
                 self._decline(e, player, stacks)
 
     def _decline(self, e: Expectation, player: int, stacks: list[int]) -> None:
@@ -169,7 +183,7 @@ class MetaState:
                 continue
             if cand.player == self.observer:
                 if cand.uid is None:
-                    cand.uid = self._observer_playable_slot(claimed)
+                    cand.uid = self._observer_playable_slot(claimed, cand.line)
                     if cand.uid is not None:
                         e.log.append("now expected of me")
                 if cand.uid is not None:
@@ -178,9 +192,19 @@ class MetaState:
                     s.uid == cand.uid for s in self.bs.public.hands[cand.player]):
                 e.current += 1  # the card left the hand some other way
 
-    def _observer_playable_slot(self, claimed: set[int]) -> int | None:
-        """Observer's newest untouched card not already claimed (shotgun line)."""
-        for s in reversed(self.bs.public.hands[self.observer]):
+    def _observer_playable_slot(self, claimed: set[int],
+                                line: tuple[int, ...] | None = None) -> int | None:
+        """Observer's newest untouched card not already claimed (shotgun line).
+
+        With `line` (the untouched cards when the signal was given, newest
+        first), only those cards count: a card drawn since then can't be the
+        one the hinter meant.
+        """
+        hand = self.bs.public.hands[self.observer]
+        if line is not None:
+            free = {s.uid for s in hand if not s.touched}
+            return next((u for u in line if u in free and u not in claimed), None)
+        for s in reversed(hand):
             if not s.touched and s.uid not in claimed:
                 return s.uid
         return None

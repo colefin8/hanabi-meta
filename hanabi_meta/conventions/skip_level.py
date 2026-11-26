@@ -29,7 +29,7 @@ from ..belief.tracker import BeliefState
 from ..engine.actions import HintEvent
 from ..engine.variant import Card
 from .base import (Candidate, Expectation, HintKind, Interpretation, needed_unlocks,
-                   playable_position, stacks_after, turn_order_after)
+                   observer_line, playable_position, stacks_after, turn_order_after)
 
 _PREF = {"known": 0, "newest": 1, "line": 2}
 
@@ -69,10 +69,11 @@ def _expectations(bs: BeliefState, plan, hint_index: int, giver: int, reason: st
                   ) -> list[Expectation]:
     out = []
     observer_can_hold = unseen_counts(bs.variant, bs.seen_by(bs.observer))
+    line = observer_line(bs)
     for need, cands in plan:
         cands = list(cands)
         if bs.observer != giver and observer_can_hold[need] > 0:
-            cands.append(Candidate(bs.observer, None, "inferred"))
+            cands.append(Candidate(bs.observer, None, "inferred", line=line))
         out.append(Expectation(need, cands, f"{reason}: unlock {bs.variant.card_str(need)}",
                                hint_index))
     return out
@@ -194,10 +195,59 @@ def _interpret_own(bs: BeliefState, hint: HintEvent, hint_index: int) -> Interpr
             return Interpretation(**base, kind=HintKind.UNCLEAR, focus=uids,
                                   reason="no untouched slot to hold the unlock")
         options = set().union(*self_needed.values())
-        exp = Expectation(None, [Candidate(bs.observer, newest[-1].uid, "newest")],
+        exp = Expectation(None, [Candidate(bs.observer, newest[-1].uid, "newest",
+                                           line=observer_line(bs))],
                           "self skip-level: nobody else holds the unlock, so it is my "
-                          "newest card", hint_index, possible=options)
+                          "newest card", hint_index, possible=options,
+                          self_hint=list(self_needed))
         return Interpretation(**base, kind=HintKind.SKIP_LEVEL, focus=uids,
                               expectations=[exp], reason=exp.reason)
     return Interpretation(**base, kind=HintKind.SAVE, focus=uids,
                           reason="hinted card can only be a critical card: save")
+
+
+def continue_self_shotgun(bs: BeliefState, interp: Interpretation, done: Expectation,
+                          played: Card) -> list[Expectation]:
+    """After I successfully play the unlock of a self skip-level, keep going (D3).
+
+    A shotgun is played newest to oldest until the hint makes sense. My played
+    card tells me the suit of the hinted card(s) it was unlocking, so narrow
+    them to that suit. If one is still not explained by what I can see, the
+    next unlock is my next card down the line (from the hint-time snapshot).
+    Returns new expectations (already-visible unlocks become ordinary ones).
+    """
+    v = bs.variant
+    views = {sv.uid: sv for sv in bs.view(bs.observer)}
+    line = list(done.candidates[0].line or ())
+    if done.candidates[0].uid in line:
+        line = line[line.index(done.candidates[0].uid) + 1:]
+    line = [u for u in line if u in views]
+    out: list[Expectation] = []
+    for uid in done.self_hint:
+        sv = views.get(uid)
+        if sv is None:
+            continue
+        same = {c for c in sv.candidates if c.suit == played.suit
+                and not is_trash(v, c, bs.stacks, bs.discards)}
+        if not same:
+            continue
+        interp.constraints[uid] = same
+        if any(is_playable(c, bs.stacks) for c in same):
+            continue  # the hint now makes sense: it was about a playable card
+        needs: set[Card] = set()
+        for c in same:
+            plan, missing = locate_unlocks(bs, c, interp.giver)
+            if missing:
+                needs.add(missing[0])
+            else:
+                out += [e for e in _expectations(bs, plan, interp.hint_index, interp.giver,
+                                                 f"shotgun on my hinted card")
+                        if e.candidates and e.candidates[0].player != bs.observer]
+        if needs and line:
+            nxt = line.pop(0)
+            out.append(Expectation(
+                None, [Candidate(bs.observer, nxt, "line", line=tuple(line))],
+                "self shotgun: the hint still doesn't make sense, so the next unlock "
+                "is my next card down the line", interp.hint_index, possible=needs,
+                self_hint=[uid]))
+    return out

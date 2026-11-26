@@ -48,6 +48,10 @@ class Candidate:
     #: resolved when the expectation reaches the observer".
     uid: int | None
     how: str  # "newest" | "known" | "line" | "inferred"
+    #: For uid=None: the observer's untouched cards (uids, newest first) when
+    #: the signal was given. The playable slot is picked from these, so a card
+    #: drawn after the hint is never mistaken for the one the hinter meant.
+    line: tuple[int, ...] | None = None
 
 
 @dataclass
@@ -63,6 +67,12 @@ class Expectation:
     current: int = 0
     possible: set[Card] = field(default_factory=set)
     log: list[str] = field(default_factory=list)
+    #: Self skip-level only: uids of my hinted cards this unlock explains. When
+    #: the play succeeds, the shotgun continues down my line (D3).
+    self_hint: list[int] = field(default_factory=list)
+    #: The expected player gave an urgent save instead of playing; that turn
+    #: does not count as declining (one turn per save).
+    excused: int = 0
 
     def options(self) -> set[Card]:
         return {self.card} if self.card is not None else set(self.possible)
@@ -93,6 +103,11 @@ class Interpretation:
 def turn_order_after(giver: int, n: int) -> list[int]:
     """Players in the order they act after `giver` (giver last)."""
     return [(giver + k) % n for k in range(1, n + 1)]
+
+
+def observer_line(bs: BeliefState) -> tuple[int, ...]:
+    """The observer's untouched cards, newest first (their shotgun line)."""
+    return tuple(s.uid for s in reversed(bs.public.hands[bs.observer]) if not s.touched)
 
 
 def needed_unlocks(card: Card, stacks: Sequence[int]) -> list[Card]:

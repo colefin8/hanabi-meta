@@ -10,7 +10,10 @@ Hints     each candidate hint is *simulated*: we apply it to a copy of the
           whose reading would be dead or unclear is rejected as misleading
           (docs/QUESTIONS.md D3c). Otherwise it is valued by what it achieves:
           new plays, unlocks via skip-level, saves of a critical chop card,
-          trash marking.
+          trash marking. A play/skip hint on a second copy of a card that is
+          already hinted or expected elsewhere is rejected (it wastes a card or
+          a strike). In the endgame, a skip-level whose unlock holder or target
+          has no turn left is rejected: a direct hint is better.
 Discards  the oldest untouched card (D6), penalised by the chance it is critical
           or playable; a card known to be trash is preferred.
 Lookahead after each candidate action, the next few players are simulated
@@ -55,6 +58,7 @@ class Weights:
     collateral_penalty: float = 1       # per touched card the hint isn't about
     info_only: float = 5                # re-hinting already-hinted cards
     info_tiebreak: float = 0.5          # per focus card, scaled by how much it narrows
+    touched_unlock_penalty: float = 10  # an unlock expected from an already-hinted card
     lookahead_depth: int = 3            # how many following players to simulate
     lookahead_crit: float = 80          # a teammate would be forced to discard a critical
     lookahead_misplay: float = 50       # a teammate would play a card that misses
@@ -226,6 +230,45 @@ def _receiver_misreads(ms: MetaState, target: int, kind: str, value: int,
     return None
 
 
+def _duplicate_of(ms: MetaState, card, target: int, uid: int) -> str | None:
+    """Where another copy of `card` is already hinted or expected, if anywhere."""
+    bs, me = ms.bs, ms.observer
+    for e in ms.pending():
+        cand = e.expected
+        if e.card == card and cand and not (cand.player == target and cand.uid == uid):
+            return f"p{cand.player} is already expected to play it"
+    for q, hand in enumerate(bs.hands):
+        if q in (target, me):
+            continue
+        for c, s in zip(hand, bs.public.hands[q]):
+            if c == card and s.touched:
+                return f"p{q} already has a hinted copy"
+    if any(sv.known == card for sv in ms.view(me)):
+        return "I already hold a known copy"
+    return None
+
+
+def _endgame_problem(sim: MetaState, target: int, interp) -> str | None:
+    """A hint whose plays can't all happen before the game ends."""
+    bs, me = sim.bs, sim.observer
+    if bs.turns_left is None:
+        return None
+    n = sim.variant.num_players
+    if not bs.has_turn(target, me):
+        return f"endgame: p{target} has no turn left"
+    if interp.kind not in (HintKind.SKIP_LEVEL, HintKind.SHOTGUN):
+        return None
+    t_off = (target - me) % n
+    for e in interp.expectations:
+        cand = e.expected
+        if cand is None:
+            continue
+        if not bs.has_turn(cand.player, me) or (cand.player - me) % n > t_off:
+            return (f"endgame: p{cand.player} can't play {sim.variant.card_str(e.card)} "
+                    f"before p{target}'s last turn; give a direct hint instead")
+    return None
+
+
 # ---- discards -------------------------------------------------------------------
 
 def _discards(ms: MetaState, w: Weights) -> list[Recommendation]:
@@ -309,7 +352,8 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
         return None  # the target learns nothing new about the touched cards
 
     was_touched = {s.uid for s in bs.public.hands[target] if s.touched}
-    if interp.focus and set(interp.focus) <= was_touched and             interp.kind is not HintKind.SAFETY_FIVE:
+    rehint = bool(interp.focus) and set(interp.focus) <= was_touched and         interp.kind is not HintKind.SAFETY_FIVE
+    if rehint:
         # Re-hinting cards that already carry a meaning only fills in detail.
         # Teammates would still read a skip-level into it (e.g. "green" on a
         # saved G5), so only a plain play or trash reading is acceptable.
@@ -320,6 +364,23 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
             rejected = True
             reasons.append("misleading: re-hinting an already-hinted card would be read "
                            f"as {interp.kind.value} (D3c)")
+    if not rejected and interp.kind in (HintKind.PLAY, HintKind.SKIP_LEVEL, HintKind.SHOTGUN):
+        for u in interp.focus:
+            if u in uid_to_slot and u not in already:
+                dup = _duplicate_of(ms, hand[uid_to_slot[u]], target, u)
+                if dup:
+                    rejected = True
+                    reasons.append(f"duplicate: {cs(hand[uid_to_slot[u]])} "
+                                   f"is covered ({dup})")
+                    break
+    if not rejected:
+        problem = _endgame_problem(sim, target, interp)
+        if problem:
+            rejected = True
+            reasons.append(problem)
+
+    if rejected or rehint:
+        pass
     elif interp.kind is HintKind.PLAY:
         new = [u for u in interp.focus
                if u not in already and not before[uid_to_slot[u]].certainly_playable]
@@ -335,6 +396,14 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
             if e.expected:
                 reasons.append(f"p{e.expected.player} should play {cs(e.card)} "
                                f"({e.expected.how})")
+                slot = next((sl for sl in bs.public.hands[e.expected.player]
+                             if sl.uid == e.expected.uid), None)
+                if slot is not None and slot.touched:
+                    # Allowed under the Meta, but it asks them to play a card
+                    # that already carries a hint: avoid when there's a cleaner way.
+                    score -= w.touched_unlock_penalty
+                    reasons.append(f"unlock sits in an already-hinted card of "
+                                   f"p{e.expected.player}")
     elif interp.kind is HintKind.SAVE:
         chop = chop_index(ms, target)
         on_chop = chop is not None and bs.public.hands[target][chop].uid in interp.focus

@@ -94,6 +94,9 @@ anyone to a wrong inference.
   - *Open detail: does "could give a hint" mean any hint token was available, or that a
     useful hint was visible? I'll assume a token was available and refine it with
     examples.*
+  - *Open (2026-11-26): the meaning may depend on how many tokens are left, and it
+    may come from looking ahead at what the next few players will do. Needs
+    clarification with examples; the code still uses "exactly 1 token".*
 
 ### D7. Inferring a playable 5 (dead color hint, then a discard)
 - Trigger: a player is color-hinted on a card that is clearly dead, and discards it,
@@ -162,6 +165,31 @@ anyone to a wrong inference.
 - **Playable 5:** needs the stack at 2+. With more than one card missing from my
   view, I don't infer which I hold.
 - **Last strike:** only play what the hints prove. Convention-only inferences wait.
+
+### D12. Second pass on interpretation edge cases (2026-11-26)
+Decided at the table:
+- **An urgent save delays a play; it isn't a decline.** If the player expected to
+  play an unlock spends their turn on a save (a hint read as a save, or a 5 hint),
+  the expectation stays with them. The next turn they don't play it counts as
+  declining as usual.
+- **An unlock can sit in an already-hinted newest card.** The holder is still
+  expected to play it, but that's inefficient, so the advisor avoids it when a
+  cleaner hint exists (small score penalty).
+- **Endgame: prefer a direct hint.** Once the deck is empty, the advisor rejects a
+  skip-level if the unlock holder has no turn left or acts after the target's last
+  turn. It also rejects any hint to a player with no turn left.
+
+Fixed:
+- When a skip-level falls back to me, "my newest card" means my newest card *when
+  the hint was given*, not a card I drew afterwards.
+- The playable-5 inference (D7) only fires when the color can still be completed.
+  A color that's dead because a lower card is discarded says nothing about where
+  the rest of it is.
+- A self shotgun keeps going: after my newest card plays as the unlock, my hinted
+  card is narrowed to that suit. If the hint still doesn't make sense, my next card
+  down the line is the next unlock.
+- The advisor rejects a play or skip-level hint on a second copy of a card already
+  hinted or expected elsewhere.
 
 ### Self-play baseline (10-20 games each, so treat as rough)
 - Regular 3p: ~16-17 mean, 0 strikeouts.

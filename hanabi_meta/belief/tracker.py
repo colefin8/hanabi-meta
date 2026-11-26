@@ -75,13 +75,18 @@ class BeliefState:
         self.strikes = 0
         self.turn = 0
         self.deck_size = len(variant.deck())
+        #: Turns left in the game once the deck is empty (None while cards
+        #: remain, or when unknown). Everyone, including the player who drew
+        #: the last card, gets one more turn.
+        self.turns_left: int | None = None
         self.history: list[Event] = []
 
     @classmethod
     def from_snapshot(cls, variant: Variant, observer: int,
                       hands: list[list[Card | None]], stacks: list[int],
                       discards: list[Card] = (), hints: int | None = None,
-                      strikes: int = 0, deck_size: int | None = None) -> "BeliefState":
+                      strikes: int = 0, deck_size: int | None = None,
+                      turns_left: int | None = None) -> "BeliefState":
         """Start mid-game from a table snapshot (for live use and test cases).
 
         Slot info starts empty: hints given before the snapshot are not known.
@@ -105,6 +110,7 @@ class BeliefState:
                 [c for h in hands for c in h if c is not None]
             deck_size = len(variant.deck()) - len(seen) - len(hands[observer])
         bs.deck_size = deck_size
+        bs.turns_left = turns_left
         unseen_counts(variant, bs.seen_by(observer))  # raises if impossible
         return bs
 
@@ -118,6 +124,8 @@ class BeliefState:
                 None if event.player == self.observer else event.card)
             self.public.add_slot(event.player, self.turn)
             self.deck_size -= 1
+            if self.deck_size == 0:
+                self.turns_left = v.num_players
         elif isinstance(event, ReorderEvent):
             self.public.permute(event.player, list(event.order))
             hand = self.hands[event.player]
@@ -126,6 +134,7 @@ class BeliefState:
             self.public.apply_hint(event)
             self.hints -= 1
             self.turn += 1
+            self._end_turn()
         elif isinstance(event, (PlayEvent, DiscardEvent)):
             self.hands[event.player].pop(event.slot)
             self.public.remove_slot(event.player, event.slot)
@@ -140,9 +149,21 @@ class BeliefState:
                 else:
                     self.hints = min(self.hints + 1, v.max_hints)
             self.turn += 1
+            self._end_turn()
         else:
             raise TypeError(f"unknown event {event!r}")
         self.history.append(event)
+
+    def _end_turn(self) -> None:
+        if self.turns_left is not None:
+            self.turns_left -= 1
+
+    def has_turn(self, player: int, after: int) -> bool:
+        """Will `player` get another turn, counting from the end of `after`'s turn?"""
+        if self.turns_left is None:
+            return True
+        offset = (player - after) % self.variant.num_players or self.variant.num_players
+        return offset <= self.turns_left
 
     def apply_all(self, events: list[Event]) -> "BeliefState":
         for e in events:
