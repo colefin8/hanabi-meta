@@ -23,7 +23,8 @@ Other conventions handled here:
   engine's hands too (Game.reorder) but must NOT also feed those ReorderEvents
   back in, or the swap would happen twice.
 * playable 5: after the receiver of a dead color hint discards that card.
-* protective discard: flags the next player's chop as unsafe (`unsafe`).
+* protective discard: with 1 token left, flags the chop of the first player
+  (up to 3 seats ahead) who'd have been forced to discard (`unsafe`).
 * duplicate signal (O4): a player discards a card they knew from their own info,
   while it is still needed. Another player's newest hinted card that could be
   that card is it, and they are expected to play it.
@@ -151,11 +152,11 @@ class MetaState:
             self.interpretations.append(interp)
             self.hint_events.append(None)
         if protective_discard.is_protective(self.bs, ev, hints_before):
-            flagged = protective_discard.flag(self.bs, ev, self.unsafe)
+            flagged = protective_discard.flag(self, ev, self.unsafe)
             if flagged is not None:
-                p = (ev.player + 1) % self.variant.num_players
+                p, uid = flagged
                 slot = next(i for i, s in enumerate(self.bs.public.hands[p])
-                            if s.uid == flagged)
+                            if s.uid == uid)
                 self.notes.append(f"protective discard by p{ev.player}: p{p}'s slot "
                                   f"{slot + 1} is unsafe to discard")
 

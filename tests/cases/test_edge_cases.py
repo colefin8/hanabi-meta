@@ -192,3 +192,51 @@ def test_i_discard_my_known_copy_instead_of_playing_it():
     recs = advise(t.ms)
     assert recs[0].summary == "discard slot 4"
     assert all(r.summary != "play slot 4" for r in recs)
+
+
+# ---- protective discard (D15) ------------------------------------------------------
+
+def _protect_table(hints):
+    # p1 has a hinted, playable R1; p2's chop is the last B2 (other one discarded).
+    t = Scenario("regular", hands=["? ? ? ? ?", "R1 B4 W1 G3 Y3", "B2 W4 R3 G4 Y4"],
+                 discards="B2", hints=hints + 1)
+    t.hint(2, 1, "R")                     # p1's R1 is a known play (W1 unhinted)
+    return t
+
+
+def test_protective_discard_protects_the_first_player_who_would_be_forced():
+    # p0 discards with 1 token. p1 would play R1, so p2 is the one protected.
+    t = _protect_table(1)
+    t.discard(0, 0, "G1")
+    assert any("p2's slot 1 is unsafe" in n for n in t.ms.notes)
+    assert all("p1's" not in n for n in t.ms.notes)
+
+
+def test_discard_with_one_token_is_ordinary_if_nobody_would_be_forced():
+    # Every player within reach has a known play: nobody is protected.
+    t = Scenario("regular", hands=["? ? ? ? ?", "R1 B4 W3 G3 Y3", "G1 W4 R3 G4 Y4"],
+                 hints=3)
+    t.hint(2, 1, "1")
+    t.hint(1, 2, "1")
+    t.discard(0, 0, "W1")
+    assert t.ms.notes == []
+
+
+def test_advisor_sees_protective_discard_vs_spending_the_last_token():
+    t = _protect_table(1)
+    recs = {r.summary: r for r in advise(t.ms)}
+    discard = recs["discard slot 1"]
+    assert any("protective discard: tells p2" in r for r in discard.reasons)
+    assert not any("lookahead" in r for r in discard.reasons)
+    # A hint that doesn't save B2 leaves p2 with no token and B2 on chop.
+    other = recs["hint p1 white"]         # a real play hint, but the last token
+    assert any("B2 (critical)" in r for r in other.reasons)
+    assert other.score < discard.score
+    # A direct save on B2 is also fine (see D15); it's ranked by its own value.
+    assert "hint p2 blue" in recs
+
+
+def test_no_protective_reading_with_two_tokens():
+    t = _protect_table(2)
+    t.discard(0, 0, "G1")
+    assert t.ms.notes == []

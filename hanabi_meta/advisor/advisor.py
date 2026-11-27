@@ -106,6 +106,8 @@ def advise(ms: MetaState, w: Weights | None = None,
             after, hints = r.after, r.after.bs.hints
         elif r.action.type is ActionType.DISCARD:
             after, hints = ms, min(ms.bs.hints + 1, v.max_hints)
+            if ms.bs.hints == 1:
+                after = _as_protective(ms, r)
         else:
             after, hints = ms, ms.bs.hints
         penalty, notes = lookahead(after, hints, w)
@@ -117,6 +119,31 @@ def advise(ms: MetaState, w: Weights | None = None,
 
 
 # ---- lookahead (D9) ---------------------------------------------------------------
+
+def _as_protective(ms: MetaState, r: Recommendation) -> MetaState:
+    """With 1 token, my discard is read as protective (D15): show what it protects.
+
+    Returns a copy where the protected player's chop is flagged unsafe, so the
+    lookahead has them discard the next card instead.
+    """
+    from ..conventions import protective_discard
+    bs, v = ms.bs, ms.variant
+    p = protective_discard.forced_discarder(ms, ms.observer)
+    if p is None:
+        return ms
+    uid = protective_discard.chop_uid(bs, p, ms.unsafe)
+    if uid is None:
+        return ms
+    after = copy.deepcopy(ms)
+    after.unsafe.add(uid)
+    slot = next(i for i, s in enumerate(bs.public.hands[p]) if s.uid == uid)
+    card = bs.hands[p][slot]
+    crit = card is not None and is_critical(v, card, bs.stacks, bs.discards)
+    r.reasons.append(f"protective discard: tells p{p} their slot {slot + 1}"
+                     + (f" ({v.card_str(card)}, last copy) " if crit and card else " ")
+                     + "is unsafe")
+    return after
+
 
 def lookahead(ms: MetaState, hints: int, w: Weights) -> tuple[float, list[str]]:
     """Simulate the next players' Meta moves; return (penalty, notes)."""

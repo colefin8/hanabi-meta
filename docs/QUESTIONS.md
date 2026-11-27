@@ -94,9 +94,7 @@ anyone to a wrong inference.
   - *Open detail: does "could give a hint" mean any hint token was available, or that a
     useful hint was visible? I'll assume a token was available and refine it with
     examples.*
-  - *Open (2026-11-26): the meaning may depend on how many tokens are left, and it
-    may come from looking ahead at what the next few players will do. Needs
-    clarification with examples; the code still uses "exactly 1 token".*
+  - *Superseded by D15 (who is protected, and when).*
 
 ### D7. Inferring a playable 5 (dead color hint, then a discard)
 - Trigger: a player is color-hinted on a card that is clearly dead, and discards it,
@@ -222,6 +220,26 @@ Fixed:
   That's a hinting error by the hinter or p1, and the advisor avoids it: when I
   hold a known card that a teammate also holds hinted, I discard mine rather than
   play it.
+
+### D15. Protective discard looks ahead (2026-11-26)
+- Consider one when, if you used the last token, a player ahead would have a
+  discard as their best move and it would throw away a needed last copy.
+- That player can be 1, 2 or 3 seats ahead of you, depending on tokens and hinted
+  playables. Example: the next player has a playable, but the one after has a
+  last copy on their oldest slot.
+- With more than 1 token, never: a protective hint (a save) is better, or a play
+  hint, leaving the call to someone later with fewer options.
+- In code (`conventions/protective_discard.py`): a discard with exactly 1 token
+  available is read as protective. Walk forward from the discarder (up to 3 seats)
+  as if they had spent the last token: players with a known or expected play play
+  it (a 5 returns the token), players with a token hint. The first who'd be forced
+  to discard has their chop flagged unsafe. If nobody would be forced, the discard
+  is ordinary.
+- The advisor reads my own discard the same way at 1 token. Its lookahead shows
+  that spending the last token would force the critical discard.
+- *Open: at 1 token, when a direct save hint on the critical card is possible, the
+  advisor currently prefers the save over the protective discard. Confirm or
+  correct.*
 
 ### Self-play baseline (10-20 games each, so treat as rough)
 After D12-D14 (15-30 games, seeds 7/11): regular 3p ~19, rainbow 3p ~22, 5p ~14.
