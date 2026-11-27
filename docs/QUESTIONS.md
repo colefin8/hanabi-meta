@@ -191,7 +191,42 @@ Fixed:
 - The advisor rejects a play or skip-level hint on a second copy of a card already
   hinted or expected elsewhere.
 
+### D13. Multi-card hints play newest -> oldest (2026-11-26)
+- Unless you have other identifying info, the newest touched card is the one to
+  play first; then the next newest, and so on.
+- Info can override the order. Example: "2" on three cards with only yellow at 1.
+  At most one is playable, so play the newest (as Y2); the others aren't playable.
+- In code: on a multi-card hint to me, the newest touched card that could be
+  playable is narrowed to "playable now, or unlocked by a card a teammate visibly
+  holds". Older touched cards aren't narrowed.
+- Not Meta, just odds: after the first card plays, holding the next one until it's
+  more certain is often right early in the game (fewer cards played or discarded,
+  so the hinted cards are less likely to line up). The advisor plays it only when
+  its probability clears the risky-play threshold, which reflects this.
+- The advisor rejects a multi-card hint if the receiver's newest touched card isn't
+  actually the one that plays first.
+
+### D14. Hinting a second copy on purpose (2026-11-26)
+- Only when p1 holds a copy (e.g. Y2) they're relatively sure of, has other
+  playable cards so they won't play it right away, and p2's hint has its own
+  purpose: newest -> oldest, p2's touched cards play in order starting with the
+  copy (e.g. Y2 then Y3).
+- p1 then discards their Y2. That tells p2 that their newest hinted card that could
+  be a Y2 is the other copy. Without it, p2 would read their yellows as Y3/Y4
+  waiting on p1's Y2.
+- "Relatively certain" matters: if p1 discards a card they only guessed was Y2
+  (e.g. it was hinted "2" and was really B2), p2 is misled into holding both
+  yellows. In code, the signal only counts if the discarder knew the card's
+  identity from their own info.
+- If p1 plays their Y2 instead, p2 plays as they think they should and misplays.
+  That's a hinting error by the hinter or p1, and the advisor avoids it: when I
+  hold a known card that a teammate also holds hinted, I discard mine rather than
+  play it.
+
 ### Self-play baseline (10-20 games each, so treat as rough)
+After D12-D14 (15-30 games, seeds 7/11): regular 3p ~19, rainbow 3p ~22, 5p ~14.
+Convention plays now hit ~86-97% (was ~30-60%). Older numbers below.
+
 - Regular 3p: ~16-17 mean, 0 strikeouts.
 - Rainbow 3p: ~16.
 - 5p: ~15 after the last-strike guard.
@@ -215,14 +250,3 @@ O3. Resolved. "Short rainbow" is variant 4 from the brief: a 6th suit with only 
 cards (two 1s, one each of 2-5). It matches "rainbow with only one 2, 3, and 4" from D5.
 *Assumed: it has its own rainbow hint and is touched by every color hint.* Tell me if
 it should be hinted only through colors, like variant 3.
-
-O4. Hinting the second copy of a card that's already hinted elsewhere (e.g. p1's Y2
-is hinted and someone hints p2's Y2 too).
-- Given only when p1 has other playable cards besides the Y2 (so p1 won't play it
-  right away) and p2's hint has its own purpose, e.g. it touches Y2 and Y3 in
-  playable order.
-- p1 can then discard their Y2. That discard tells p2 that one of p2's hinted
-  yellows is the other Y2.
-- Not implemented yet: the advisor still rejects every duplicate hint. Details to
-  confirm: whether p1 must know their card is exactly Y2, how p2 tells which yellow
-  is the 2, and what p2 reads if p1 plays their Y2 instead of discarding it.

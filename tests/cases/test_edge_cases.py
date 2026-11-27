@@ -110,3 +110,85 @@ def test_unlock_in_an_already_hinted_card_is_allowed_but_penalised():
             t.hint(2, 3, "2")             # p3's Y2 now carries a hint
         return _hints(t)["hint p1 yellow"].score
     assert score(True) < score(False)
+
+
+# ---- multi-card hints: newest -> oldest (D13) -------------------------------------
+
+def test_multi_card_hint_to_me_plays_newest_first():
+    t = Scenario("regular", hands=["? ? ? ?", "R4 B4 W3 G3", "G4 B3 R3 W4"], stacks="Y1")
+    t.hint(1, 0, "Y", touched=[2, 3])
+    assert t.my_slot(3) == {"Y2"}         # newest touched yellow plays first
+    assert len(t.my_slot(2)) > 1          # the older one waits
+    assert advise(t.ms)[0].summary == "play slot 4"
+
+
+def test_three_twos_with_one_playable_pile_newest_is_the_two():
+    # Only yellow has its 1: at most one of my 2s is playable, and it's the newest.
+    t = Scenario("regular", hands=["? ? ? ?", "R4 B4 W3 G3", "G4 B3 R3 W4"], stacks="Y1")
+    t.hint(1, 0, "2", touched=[0, 1, 3])
+    assert t.my_slot(3) == {"Y2"}
+    assert "Y2" in t.my_slot(1) and len(t.my_slot(1)) > 1
+
+
+def test_advisor_rejects_multi_card_hint_whose_newest_card_is_not_playable():
+    bad = Scenario("regular", hands=["? ? ? ?", "R4 Y2 B4 Y3", "G4 B3 R3 W4",
+                                     "G3 W5 B5 R2"], stacks="Y1")
+    h = _hints(bad)["hint p1 yellow"]
+    assert h.rejected and any("first" in r for r in h.reasons)
+    good = Scenario("regular", hands=["? ? ? ?", "R4 Y3 B4 Y2", "G4 B3 R3 W4",
+                                      "G3 W5 B5 R2"], stacks="Y1")
+    assert not _hints(good)["hint p1 yellow"].rejected
+
+
+# ---- duplicate-hint convention (O4) -----------------------------------------------
+
+def _p1_knows_y2_and_r1(t):
+    t.hint(2, 1, "Y")                     # touches only Y2
+    t.hint(3, 1, "2")                     # Y2 is now known exactly
+    t.hint(2, 1, "1")                     # R1 known playable too
+
+
+def test_known_copy_discarded_tells_me_my_newest_hinted_card_is_it():
+    t = Scenario("regular", hands=["? ? ? ?", "R1 B4 W3 Y2", "G4 B3 R3 W4",
+                                   "G3 W5 B4 R4"], stacks="Y1")
+    _p1_knows_y2_and_r1(t)
+    t.hint(3, 0, "Y", touched=[2, 3])     # my Y3 + the second Y2
+    t.discard(1, 3, "Y2", draw="G1")      # p1 discards their known Y2: the signal
+    assert t.ms.interpretations[-1].kind is HintKind.DUPLICATE
+    assert t.my_slot(3) == {"Y2"}
+    assert set(t.expected(0)) == {"Y2"}   # p1's play and the unlock both move to me
+    assert t.expected(1) == []
+
+
+def test_discarding_a_card_you_only_guessed_is_not_the_signal():
+    # p1 was only hinted "2": discarding it says nothing about my yellows.
+    t = Scenario("regular", hands=["? ? ? ?", "R1 B4 W3 Y2", "G4 B3 R3 W4",
+                                   "G3 W5 B4 R4"], stacks="Y1")
+    t.hint(3, 1, "2")
+    t.hint(3, 0, "Y", touched=[2, 3])
+    t.discard(1, 3, "Y2", draw="G1")
+    assert all(i.kind is not HintKind.DUPLICATE for i in t.ms.interpretations)
+
+
+def test_advisor_allows_duplicate_hint_only_in_the_o4_setup():
+    hands = ["? ? ? ?", "R1 B4 W3 Y2", "G4 B3 Y3 Y2", "G3 W5 B4 R4"]
+    t = Scenario("regular", hands=hands, stacks="Y1")
+    _p1_knows_y2_and_r1(t)
+    h = _hints(t)["hint p2 yellow"]
+    assert not h.rejected and any("O4" in r for r in h.reasons)
+    # Without another playable card, p1 would just play their Y2: no duplicate.
+    t = Scenario("regular", hands=hands, stacks="Y1")
+    t.hint(2, 1, "Y")
+    t.hint(3, 1, "2")
+    assert _hints(t)["hint p2 yellow"].rejected
+
+
+def test_i_discard_my_known_copy_instead_of_playing_it():
+    t = Scenario("regular", hands=["? ? ? ?", "R4 B4 W3 G3", "G4 B3 Y3 Y2",
+                                   "G3 W5 B5 R4"], stacks="Y1")
+    t.hint(1, 0, "Y", touched=[3])
+    t.hint(3, 0, "2", touched=[3])        # my slot 4 is Y2, known
+    t.hint(1, 2, "Y")                     # p2's Y3 + Y2 (the O4 hint)
+    recs = advise(t.ms)
+    assert recs[0].summary == "discard slot 4"
+    assert all(r.summary != "play slot 4" for r in recs)

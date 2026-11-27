@@ -24,16 +24,19 @@ Other conventions handled here:
   back in, or the swap would happen twice.
 * playable 5: after the receiver of a dead color hint discards that card.
 * protective discard: flags the next player's chop as unsafe (`unsafe`).
+* duplicate signal (O4): a player discards a card they knew from their own info,
+  while it is still needed. Another player's newest hinted card that could be
+  that card is it, and they are expected to play it.
 """
 from __future__ import annotations
 
-from ..belief.bookkeeping import is_playable
+from ..belief.bookkeeping import is_playable, is_trash
 from ..belief.tracker import BeliefState, SlotView
 from ..engine.actions import (DiscardEvent, DrawEvent, Event, HintEvent, PlayEvent,
                               ReorderEvent)
 from ..engine.variant import Card, Variant
 from . import playable_five, protective_discard, safety_swap, skip_level, trash_hint
-from .base import ExpStatus, Expectation, HintKind, Interpretation
+from .base import Candidate, ExpStatus, Expectation, HintKind, Interpretation
 
 
 class MetaState:
@@ -98,12 +101,13 @@ class MetaState:
                 for e in self.pending())
             stacks_before = list(bs.stacks)
             hints_before = bs.hints
+            knew = self.view(event.player)[event.slot].known
             bs.apply(event)
             if isinstance(event, PlayEvent):
                 self._on_play(event, uid, was_known_playable, stacks_before)
             else:
                 self._actor_did_not_play(event.player, stacks_before)
-                self._on_discard(event, uid, hints_before)
+                self._on_discard(event, uid, hints_before, knew)
         elif isinstance(event, (DrawEvent, ReorderEvent)):
             bs.apply(event)
         else:
@@ -136,8 +140,11 @@ class MetaState:
                 else:
                     self._decline(e, ev.player, stacks_before)
 
-    def _on_discard(self, ev: DiscardEvent, uid: int, hints_before: int) -> None:
+    def _on_discard(self, ev: DiscardEvent, uid: int, hints_before: int,
+                    knew=None) -> None:
         self.unsafe.discard(uid)
+        if knew == ev.card:
+            self._duplicate_signal(ev)
         interp = playable_five.on_discard(self.bs, self.interpretations, self.hint_events,
                                           ev, uid, len(self.interpretations))
         if interp:
@@ -151,6 +158,41 @@ class MetaState:
                             if s.uid == flagged)
                 self.notes.append(f"protective discard by p{ev.player}: p{p}'s slot "
                                   f"{slot + 1} is unsafe to discard")
+
+    def _duplicate_signal(self, ev: DiscardEvent) -> None:
+        """O4: a known, still-needed card was discarded on purpose."""
+        bs, v, card = self.bs, self.variant, ev.card
+        if is_trash(v, card, bs.stacks, bs.discards):
+            return
+        n = v.num_players
+        for k in range(1, n):
+            q = (ev.player + k) % n
+            views = self.view(q)
+            slots = [i for i, s in enumerate(bs.public.hands[q])
+                     if s.touched and card in views[i].candidates]
+            if not slots:
+                continue
+            uid = bs.public.hands[q][slots[-1]].uid  # newest hinted candidate
+            cand = Candidate(q, uid, "known")
+            idx = len(self.interpretations)
+            interp = Interpretation(
+                hint_index=idx, giver=ev.player, target=q, kind=HintKind.DUPLICATE,
+                focus=[uid],
+                reason=f"p{ev.player} discarded their known {v.card_str(card)}: "
+                       f"p{q}'s newest hinted card that could be it is the other copy")
+            redirected = False
+            for e in self.pending():
+                if e.card == card:
+                    e.candidates.insert(e.current, Candidate(q, uid, "known"))
+                    e.log.append(f"duplicate signal: now p{q}'s hinted card")
+                    redirected = True
+            if not redirected:
+                interp.expectations.append(Expectation(card, [cand], interp.reason, idx))
+            if q == self.observer:
+                interp.constraints[uid] = {card}
+            self.interpretations.append(interp)
+            self.hint_events.append(None)
+            return
 
     def _actor_did_not_play(self, player: int, stacks: list[int] | None = None,
                             excuse: bool = False) -> None:
@@ -235,7 +277,7 @@ class MetaState:
         cs = self.variant.card_str
         lines = []
         for i in self.interpretations:
-            label = "signal" if i.kind.value == "playable_five" else "hint"
+            label = "signal" if i.kind.value in ("playable_five", "duplicate") else "hint"
             lines.append(f"{label} #{i.hint_index} (p{i.giver}->p{i.target}): "
                          f"{i.kind.value}: {i.reason}")
             for e in i.expectations:

@@ -30,6 +30,7 @@ class HintKind(str, Enum):
     TRASH = "trash"            # unmistakable "safe to discard" hint
     PLAYABLE_FIVE = "playable_five"  # dead color hint + discard (not a hint itself)
     DEAD = "dead"              # touched card is trash, but not obviously to the receiver
+    DUPLICATE = "duplicate"    # a known copy discarded: another hinted copy is it (O4)
     UNCLEAR = "unclear"
 
 
@@ -47,7 +48,7 @@ class Candidate:
     #: uid of the slot holding it; None means "observer's own playable slot,
     #: resolved when the expectation reaches the observer".
     uid: int | None
-    how: str  # "newest" | "known" | "line" | "inferred"
+    how: str  # "newest" | "known" | "line" | "inferred" | "lead" (newest of a multi-card hint)
     #: For uid=None: the observer's untouched cards (uids, newest first) when
     #: the signal was given. The playable slot is picked from these, so a card
     #: drawn after the hint is never mistaken for the one the hinter meant.

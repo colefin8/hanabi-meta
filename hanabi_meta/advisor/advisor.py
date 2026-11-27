@@ -28,7 +28,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
 
-from ..belief.bookkeeping import is_critical, is_playable
+from ..belief.bookkeeping import is_critical, is_playable, is_trash
 from ..conventions.base import HintKind
 from ..conventions.meta_state import MetaState
 from ..engine.actions import Action, ActionType, HintEvent
@@ -59,6 +59,7 @@ class Weights:
     info_only: float = 5                # re-hinting already-hinted cards
     info_tiebreak: float = 0.5          # per focus card, scaled by how much it narrows
     touched_unlock_penalty: float = 10  # an unlock expected from an already-hinted card
+    duplicate_signal_discard: float = 102  # O4: discard my known copy (unblocks their run)
     lookahead_depth: int = 3            # how many following players to simulate
     lookahead_crit: float = 80          # a teammate would be forced to discard a critical
     lookahead_misplay: float = 50       # a teammate would play a card that misses
@@ -163,6 +164,8 @@ def _plays(ms: MetaState, w: Weights) -> list[Recommendation]:
         a = Action.play(sv.slot)
         if last_strike and not hard[sv.slot].certainly_playable:
             continue  # on the last strike, only play what the hints prove
+        if sv.known and _hinted_copy_elsewhere(ms, sv.known) is not None:
+            continue  # O4: they'll play their copy; see _discards
         cands = "/".join(sorted(v.card_str(c) for c in sv.candidates))
         reasons = []
         if sv.uid in expected:
@@ -182,6 +185,20 @@ def _plays(ms: MetaState, w: Weights) -> list[Recommendation]:
             continue
         out.append(Recommendation(a, score, describe(v, a), reasons))
     return out
+
+
+def _hinted_copy_elsewhere(ms: MetaState, card) -> int | None:
+    """A teammate holding a hinted copy of `card` (they'll play theirs), if any."""
+    bs = ms.bs
+    if is_trash(ms.variant, card, bs.stacks, bs.discards):
+        return None
+    for q, hand in enumerate(bs.hands):
+        if q == ms.observer:
+            continue
+        for c, s in zip(hand, bs.public.hands[q]):
+            if c == card and s.touched:
+                return q
+    return None
 
 
 def _maybe_waiting(ms: MetaState, sv) -> bool:
@@ -220,32 +237,76 @@ def _receiver_misreads(ms: MetaState, target: int, kind: str, value: int,
     real = bs.hands[target]
     for e in interp.expectations:
         cand = e.expected
-        if cand is None or cand.player != target or cand.how != "newest":
+        if cand is None or cand.player != target or cand.how not in ("newest", "lead"):
             continue
         slot = next(i for i, s in enumerate(tb.public.hands[target]) if s.uid == cand.uid)
         card = real[slot]
         if card is None or not is_playable(card, bs.stacks) or card not in e.options():
-            return (f"p{target} would read a self skip-level and blind-play their "
-                    f"newest card ({v.card_str(card) if card else '?'})")
+            what = ("a self skip-level and blind-play their newest card" if cand.how == "newest"
+                    else "the newest hinted card as the one to play first")
+            return f"p{target} would read {what} ({v.card_str(card) if card else '?'})"
     return None
 
 
-def _duplicate_of(ms: MetaState, card, target: int, uid: int) -> str | None:
-    """Where another copy of `card` is already hinted or expected, if anywhere."""
+def _o4_ok(ms: MetaState, holder: int, holder_uid: int, card, target: int,
+           touched: tuple[int, ...]) -> bool:
+    """O4: may I hint a second copy of `card` to `target` while `holder` has one?
+
+    Only when the holder is sure of their copy (they'll discard it as the
+    signal rather than misread it), has another playable card to get on with,
+    and the hint to the target has its own purpose: newest -> oldest, the
+    touched cards play in order, starting with this copy.
+    """
+    bs = ms.bs
+    views = ms.view(holder)
+    mine = next((sv for sv in views if sv.uid == holder_uid), None)
+    if mine is None or mine.known != card:
+        return False
+    if not any(sv.certainly_playable and sv.uid != holder_uid for sv in views):
+        return False
+    run = [bs.hands[target][i] for i in sorted(touched, reverse=True)]
+    if len(run) < 2 or run[0] != card:
+        return False
+    stacks = list(bs.stacks)
+    for c in run[:2]:
+        if c is None or not is_playable(c, stacks):
+            return False
+        stacks[c.suit] = c.rank
+    return True
+
+
+def _duplicate_of(ms: MetaState, card, target: int, uid: int,
+                  touched: tuple[int, ...] = ()) -> tuple[str | None, str | None]:
+    """(problem, note): where another copy of `card` is already hinted or expected.
+
+    The O4 exception turns a problem into a note: the holder should discard
+    their copy, which tells the target their newest hinted card is it.
+    """
     bs, me = ms.bs, ms.observer
+    holders: list[tuple[int, int, str]] = []
     for e in ms.pending():
         cand = e.expected
         if e.card == card and cand and not (cand.player == target and cand.uid == uid):
-            return f"p{cand.player} is already expected to play it"
+            holders.append((cand.player, cand.uid, f"p{cand.player} is already expected "
+                                                   f"to play it"))
     for q, hand in enumerate(bs.hands):
         if q in (target, me):
             continue
         for c, s in zip(hand, bs.public.hands[q]):
             if c == card and s.touched:
-                return f"p{q} already has a hinted copy"
-    if any(sv.known == card for sv in ms.view(me)):
-        return "I already hold a known copy"
-    return None
+                holders.append((q, s.uid, f"p{q} already has a hinted copy"))
+    for sv in ms.view(me):
+        if sv.known == card:
+            holders.append((me, sv.uid, "I already hold a known copy"))
+    if not holders:
+        return None, None
+    for q, huid, why in holders:
+        if huid is None or not _o4_ok(ms, q, huid, card, target, touched):
+            return why, None
+    q = holders[0][0]
+    who = "I" if q == me else f"p{q}"
+    return None, (f"duplicate on purpose (O4): {who} should discard their "
+                  f"{ms.variant.card_str(card)}, telling p{target} which hinted card it is")
 
 
 def _endgame_problem(sim: MetaState, target: int, interp) -> str | None:
@@ -278,6 +339,16 @@ def _discards(ms: MetaState, w: Weights) -> list[Recommendation]:
     views = ms.view(me)
     token_bonus = w.discard_token_bonus * (v.max_hints - bs.hints) / v.max_hints
     out = []
+    for sv in views:
+        q = _hinted_copy_elsewhere(ms, sv.known) if sv.known else None
+        if q is not None:
+            a = Action.discard(sv.slot)
+            out.append(Recommendation(
+                a, w.duplicate_signal_discard, describe(v, a),
+                [f"p{q} holds a hinted {v.card_str(sv.known)} too: discarding mine "
+                 f"tells them which hinted card it is (O4)",
+                 "playing mine would leave their copy to misplay"]))
+            break
     trash = [sv for sv in views if sv.certainly_trash]
     for sv in trash[:1]:
         a = Action.discard(sv.slot)
@@ -367,7 +438,9 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
     if not rejected and interp.kind in (HintKind.PLAY, HintKind.SKIP_LEVEL, HintKind.SHOTGUN):
         for u in interp.focus:
             if u in uid_to_slot and u not in already:
-                dup = _duplicate_of(ms, hand[uid_to_slot[u]], target, u)
+                dup, note = _duplicate_of(ms, hand[uid_to_slot[u]], target, u, touched)
+                if note:
+                    reasons.append(note)
                 if dup:
                     rejected = True
                     reasons.append(f"duplicate: {cs(hand[uid_to_slot[u]])} "

@@ -188,6 +188,8 @@ def _interpret_own(bs: BeliefState, hint: HintEvent, hint_index: int) -> Interpr
             i = hint.touched[0]
             interp.constraints[uids[0]] = {
                 c for c in views[i].candidates if not is_trash(v, c, bs.stacks, bs.discards)}
+        else:
+            _newest_first(bs, interp, hint, explained)
         return interp
     if self_needed and not all_critical:
         newest = [s for s in hand if not s.touched]
@@ -204,6 +206,31 @@ def _interpret_own(bs: BeliefState, hint: HintEvent, hint_index: int) -> Interpr
                               expectations=[exp], reason=exp.reason)
     return Interpretation(**base, kind=HintKind.SAVE, focus=uids,
                           reason="hinted card can only be a critical card: save")
+
+
+def _newest_first(bs: BeliefState, interp: Interpretation, hint: HintEvent,
+                  explained: dict[int, set[Card]]) -> None:
+    """Multi-card hint to me: the touched cards play newest -> oldest (D13).
+
+    The newest touched card that could be playable is read as the one to play
+    first, unless my info rules it out (then the next newest). It's narrowed to
+    "playable now, or unlocked by a card a teammate visibly holds". Older
+    touched cards aren't narrowed: whether to play the next one after it is a
+    probability call, which gets safer as the game goes on.
+    """
+    hand = bs.public.hands[bs.observer]
+    for i in sorted(hint.touched, reverse=True):
+        uid = hand[i].uid
+        opts = explained.get(uid, set())
+        if not any(is_playable(c, bs.stacks) for c in opts):
+            continue
+        interp.constraints[uid] = set(opts)
+        if all(is_playable(c, bs.stacks) for c in opts):
+            interp.expectations.append(Expectation(
+                None, [Candidate(bs.observer, uid, "lead")],
+                "multi-card hint: the newest hinted card plays first", interp.hint_index,
+                possible=set(opts)))
+        return
 
 
 def continue_self_shotgun(bs: BeliefState, interp: Interpretation, done: Expectation,
