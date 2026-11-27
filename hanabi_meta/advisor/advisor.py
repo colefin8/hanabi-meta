@@ -5,6 +5,10 @@ and every score is built from named parts that end up in the explanation.
 
 Plays     certain (by info or by a convention expectation) > risky (only above a
           probability threshold, and never on the last strike).
+
+House rule: the game ends once a perfect game is impossible, so losing the last
+copy of a needed card (by a discard or a misplay) costs `game_loss`, far more
+than any points. A risky play is charged for the chance its miss is such a card.
 Hints     each candidate hint is *simulated*: we apply it to a copy of the
           MetaState and read the Interpretation the conventions produce. A hint
           whose reading would be dead or unclear is rejected as misleading
@@ -38,7 +42,7 @@ from ..engine.variant import Variant
 @dataclass
 class Weights:
     play_certain: float = 100
-    play_five_bonus: float = 3          # a 5 also returns a hint token
+    play_five_bonus: float = 3          # a 5 also returns a hint token (official rules)
     risky_min_p: float = 0.6            # never suggest a blind play below this
     risky_scale: float = 50             # score = risky_scale * p(playable)
     save_chop: float = 85               # saving a critical card on someone's chop
@@ -60,11 +64,19 @@ class Weights:
     info_tiebreak: float = 0.5          # per focus card, scaled by how much it narrows
     touched_unlock_penalty: float = 10  # an unlock expected from an already-hinted card
     duplicate_signal_discard: float = 102  # O4: discard my known copy (unblocks their run)
-    protective_crit_bonus: float = 80   # 0 tokens: a protective discard saves a last copy
-                                        # (my known play isn't lost, only delayed)
+    protective_crit_bonus: float = 80   # a protective discard that saves a last copy
+                                        # (beats a save hint; see D15)
     lookahead_depth: int = 3            # how many following players to simulate
     lookahead_crit: float = 80          # a teammate would be forced to discard a critical
     lookahead_misplay: float = 50       # a teammate would play a card that misses
+    #: Losing the last copy of a needed card. With `end_when_perfect_lost` this
+    #: ends the game, so it replaces the smaller crit penalties above.
+    game_loss: float = 300
+
+
+def _crit_cost(v: Variant, w: Weights, base: float) -> float:
+    """Cost of losing a critical card: the game itself under the house rule."""
+    return max(base, w.game_loss) if v.end_when_perfect_lost else base
 
 
 @dataclass
@@ -146,10 +158,18 @@ def _as_protective(ms: MetaState, r: Recommendation, w: Weights) -> MetaState:
     r.reasons.append(f"protective discard: tells p{p} their slot {slot + 1}"
                      + (f" ({v.card_str(card)}, last copy) " if crit and card else " ")
                      + "is unsafe")
-    if crit and bs.hints == 0:
-        # No save hint is possible at 0 tokens; my known play only waits a round.
+    if crit:
+        # The signal protects the last copy itself. At 0 tokens no save hint is
+        # possible and my known play only waits a round; at 1 token it beats a
+        # save hint because it gets a token back instead of spending one. If the
+        # signal would protect some other card, there's no bonus and a save hint
+        # wins. If a needed card would still be discarded, the lookahead penalty
+        # cancels it.
         r.score += w.protective_crit_bonus
-        r.reasons.append("my known play can wait a round; the last copy can't be replaced")
+        r.reasons.append("my known play can wait a round; the last copy can't be replaced"
+                         if bs.hints == 0 else
+                         "more hint-efficient than a save hint: gains a token instead "
+                         "of spending one")
     return after
 
 
@@ -170,8 +190,13 @@ def lookahead(ms: MetaState, hints: int, w: Weights) -> tuple[float, list[str]]:
             card = bs.hands[p][play.slot]
             if not is_playable(card, bs.stacks):
                 penalty += w.lookahead_misplay
-                notes.append(f"lookahead: p{p} would play {cs(card)} and miss")
-            elif card.rank == 5:
+                if is_critical(v, card, bs.stacks, bs.discards):
+                    penalty += _crit_cost(v, w, 0)
+                    notes.append(f"lookahead: p{p} would play {cs(card)} and miss, "
+                                 f"losing the last copy")
+                else:
+                    notes.append(f"lookahead: p{p} would play {cs(card)} and miss")
+            elif card.rank == 5 and v.five_returns_hint:
                 hints = min(hints + 1, v.max_hints)
             continue
         if hints > 0:
@@ -180,7 +205,7 @@ def lookahead(ms: MetaState, hints: int, w: Weights) -> tuple[float, list[str]]:
         chop = chop_index(ms, p)
         card = bs.hands[p][chop if chop is not None else 0]
         if is_critical(v, card, bs.stacks, bs.discards):
-            penalty += w.lookahead_crit
+            penalty += _crit_cost(v, w, w.lookahead_crit)
             notes.append(f"lookahead: p{p} would have no hint and discard {cs(card)} "
                          f"(critical)")
         hints = min(hints + 1, v.max_hints)
@@ -208,7 +233,7 @@ def _plays(ms: MetaState, w: Weights) -> list[Recommendation]:
         if sv.certainly_playable:
             score = w.play_certain
             reasons.append(f"certainly playable ({cands})")
-            if all(c.rank == 5 for c in sv.candidates):
+            if v.five_returns_hint and all(c.rank == 5 for c in sv.candidates):
                 score += w.play_five_bonus
                 reasons.append("a 5 returns a hint token")
         elif sv.touched and _maybe_waiting(ms, sv):
@@ -216,6 +241,12 @@ def _plays(ms: MetaState, w: Weights) -> list[Recommendation]:
         elif sv.p_playable >= w.risky_min_p and bs.strikes < v.max_strikes - 1:
             score = w.risky_scale * sv.p_playable
             reasons.append(f"{sv.p_playable:.0%} playable ({cands}); risks a strike")
+            p_loss = sv.p_where(lambda c: not is_playable(c, bs.stacks)
+                                and is_critical(v, c, bs.stacks, bs.discards))
+            if p_loss:
+                score -= _crit_cost(v, w, w.discard_crit_penalty) * p_loss
+                reasons.append(f"{p_loss:.0%} chance a miss loses the last copy"
+                               + (" (ends the game)" if v.end_when_perfect_lost else ""))
         else:
             continue
         out.append(Recommendation(a, score, describe(v, a), reasons))
@@ -393,13 +424,15 @@ def _discards(ms: MetaState, w: Weights) -> list[Recommendation]:
     chop = chop_index(ms, me)
     if chop is None and not trash:
         a = Action.discard(0)
-        out.append(Recommendation(a, w.discard_base + token_bonus - w.discard_crit_penalty,
+        out.append(Recommendation(a, w.discard_base + token_bonus
+                                  - _crit_cost(v, w, w.discard_crit_penalty),
                                   describe(v, a), ["every card is hinted or flagged "
                                                    "unsafe: oldest card as a last resort"]))
     if chop is not None and not (trash and trash[0].slot == chop):
         sv = views[chop]
         a = Action.discard(chop)
-        score = (w.discard_base + token_bonus - w.discard_crit_penalty * sv.p_critical
+        crit_cost = _crit_cost(v, w, w.discard_crit_penalty)
+        score = (w.discard_base + token_bonus - crit_cost * sv.p_critical
                  - w.discard_playable_penalty * sv.p_playable)
         reasons = ["oldest un-hinted card (default discard)",
                    f"regains a hint ({bs.hints} now)"]
@@ -408,7 +441,8 @@ def _discards(ms: MetaState, w: Weights) -> list[Recommendation]:
             reasons.append(f"skips {len(skipped)} card(s) flagged unsafe by a "
                            f"protective discard")
         if sv.p_critical:
-            reasons.append(f"{sv.p_critical:.0%} chance it is critical")
+            reasons.append(f"{sv.p_critical:.0%} chance it is critical"
+                           + (" (losing it ends the game)" if v.end_when_perfect_lost else ""))
         if sv.p_playable:
             reasons.append(f"{sv.p_playable:.0%} chance it is playable")
         out.append(Recommendation(a, score, describe(v, a), reasons))

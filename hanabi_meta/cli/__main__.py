@@ -62,6 +62,10 @@ def render(ms: MetaState, actual: list[Card] | None = None) -> str:
     stacks = " ".join(f"{s.letter}{h}" for s, h in zip(v.suits, bs.stacks))
     disc = " ".join(sorted(v.card_str(c) for c in bs.discards.elements())) or "-"
     lines += [f"stacks: {stacks}    discards: {disc}"]
+    lost = bs.perfect_lost()
+    if lost:
+        lines.append(f"PERFECT GAME LOST ({lost})"
+                     + (": game over under our rules" if v.end_when_perfect_lost else ""))
     for p in range(v.num_players):
         if p == me:
             continue
@@ -84,7 +88,8 @@ def render(ms: MetaState, actual: list[Card] | None = None) -> str:
 def render_spectator(sg) -> str:
     game = sg.table.game
     if game.is_over:
-        return f"game over: score {game.score}, strikes {game.strikes}, {game.turn} turns"
+        return (f"game over ({game.end_reason}): score {game.score}, "
+                f"strikes {game.strikes}, {game.turn} turns")
     p = game.current
     return render(sg.table.seats[p], actual=game.hands[p])
 
@@ -117,7 +122,7 @@ class _View:
         if self.spectator:
             game = self.obj.table.game
             if game.is_over:
-                return "game over"
+                return f"game over ({game.end_reason})"
             return f"advice for p{game.current}:\n" + render_advice(
                 self.obj.table.seats[game.current], show_rejected)
         return render_advice(self.obj.ms, show_rejected)

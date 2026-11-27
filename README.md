@@ -200,9 +200,18 @@ tests/
 * A "rainbow" hint (where it exists) touches only rainbow cards.
 * Rank hints work normally; rainbow cards are not special for rank.
 * Max score is 30 in every rainbow variant.
-* Rules flags with their defaults (official rules as I understand them):
+* **Our table's rules** (the defaults; they differ from the official rules):
+  * The game ends as soon as a perfect game (every suit to 5) is impossible: every copy
+    of a still-needed card has been discarded or misplayed, or more cards are still
+    needed than turns remain. `end_when_perfect_lost=True` (official: `False`).
+  * Playing a 5 does **not** return a hint token. `five_returns_hint=False` (official: `True`).
+  * The score when the game ends is still recorded (useful for training), but the goal
+    is a perfect game. The advisor charges `Weights.game_loss` for losing a last copy, so
+    a safe move beats a risky one that could end the game (e.g. a blind play that might
+    be the 5 while the stack is on 3).
+* Other rules flags with their defaults (official rules as I understand them):
   `allow_empty_hints=False` (a hint must touch ≥1 card), `allow_discard_at_max_hints=False`,
-  `zero_score_on_strikeout=True`, `five_returns_hint=True`, `max_hints=8`, `max_strikes=3`.
+  `zero_score_on_strikeout=True`, `max_hints=8`, `max_strikes=3`.
 * Final round: when the last card is drawn, every player including the one who drew it
   gets exactly one more turn.
 * Dealing is player-major (player 0 gets the first cards). Only matters for replaying a

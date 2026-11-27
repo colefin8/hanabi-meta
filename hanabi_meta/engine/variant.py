@@ -59,8 +59,14 @@ class Variant:
     allow_empty_hints: bool = False
     #: Official rules: you may not discard while all 8 hint tokens are available.
     allow_discard_at_max_hints: bool = False
-    #: Playing a 5 returns a hint token (if not already at max).
-    five_returns_hint: bool = True
+    #: Playing a 5 returns a hint token (if not already at max). Official rules
+    #: say yes; our table plays that it does not.
+    five_returns_hint: bool = False
+    #: House rule: the game ends as soon as a perfect game (every suit to 5) is
+    #: impossible: every copy of a needed card is gone, or too few turns remain.
+    #: The score at that point is still recorded (useful for training), but the
+    #: goal is a perfect game. Official rules: False (play on for points).
+    end_when_perfect_lost: bool = True
     _hint_colors: tuple[int, ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:

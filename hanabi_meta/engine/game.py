@@ -67,9 +67,36 @@ class Game:
 
     @property
     def is_over(self) -> bool:
-        return (self.strikes >= self.variant.max_strikes
-                or sum(self.stacks) == self.variant.max_score
-                or self.turns_left == 0)
+        return self.end_reason is not None
+
+    @property
+    def is_perfect(self) -> bool:
+        return sum(self.stacks) == self.variant.max_score
+
+    @property
+    def perfect_lost(self) -> str | None:
+        """Why a perfect game can no longer happen (None while it still can)."""
+        from ..belief.bookkeeping import max_plays_left, perfect_lost  # (import cycle)
+        if self.strikes >= self.variant.max_strikes:
+            return "struck out"
+        return perfect_lost(self.variant, self.stacks, Counter(self.discards),
+                            max_plays_left(self.num_players, len(self.deck), self.turns_left))
+
+    @property
+    def end_reason(self) -> str | None:
+        """Why the game is over, or None while it continues."""
+        v = self.variant
+        if self.strikes >= v.max_strikes:
+            return "struck out"
+        if self.is_perfect:
+            return "perfect game"
+        if v.end_when_perfect_lost:
+            lost = self.perfect_lost
+            if lost:
+                return f"perfect game lost: {lost}"
+        if self.turns_left == 0:
+            return "final round over"
+        return None
 
     @property
     def score(self) -> int:

@@ -51,3 +51,31 @@ def is_critical(variant: Variant, card: Card, stacks: Sequence[int],
     if is_trash(variant, card, stacks, discarded):
         return False
     return variant.copies(card) - discarded[card] == 1
+
+
+def max_plays_left(num_players: int, deck_size: int, turns_left: int | None) -> int:
+    """Upper bound on successful plays still possible: one per remaining turn.
+
+    While cards remain, every play or discard draws, so at most `deck_size`
+    more such turns happen before the final round of `num_players` turns
+    (hints don't draw, but don't play either).
+    """
+    return turns_left if turns_left is not None else deck_size + num_players
+
+
+def perfect_lost(variant: Variant, stacks: Sequence[int], discarded: Counter[Card],
+                 plays_left: int | None = None) -> str | None:
+    """Why a perfect game (every suit to 5) is no longer possible, or None.
+
+    Either every copy of a still-needed card is gone (discarded or misplayed),
+    or more cards are still needed than turns remain to play them.
+    """
+    for s in range(variant.num_suits):
+        top = max_reachable(variant, s, stacks, discarded)
+        if top < 5:
+            gone = Card(s, top + 1)
+            return f"every {variant.card_str(gone)} is gone"
+    needed = variant.max_score - sum(stacks)
+    if plays_left is not None and needed > plays_left:
+        return f"{needed} cards still needed but at most {plays_left} turns left"
+    return None

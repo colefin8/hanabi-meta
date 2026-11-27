@@ -196,10 +196,10 @@ def test_i_discard_my_known_copy_instead_of_playing_it():
 
 # ---- protective discard (D15) ------------------------------------------------------
 
-def _protect_table(hints):
+def _protect_table(hints, **rules):
     # p1 has a hinted, playable R1; p2's chop is the last B2 (other one discarded).
     t = Scenario("regular", hands=["? ? ? ? ?", "R1 B4 W1 G3 Y3", "B2 W4 R3 G4 Y4"],
-                 discards="B2", hints=hints + 1)
+                 discards="B2", hints=hints + 1, **rules)
     t.hint(2, 1, "R")                     # p1's R1 is a known play (W1 unhinted)
     return t
 
@@ -223,7 +223,9 @@ def test_discard_with_one_token_is_ordinary_if_nobody_would_be_forced():
 
 
 def test_advisor_sees_protective_discard_vs_spending_the_last_token():
-    t = _protect_table(1)
+    # Official rules (play on after a last copy is lost): the protective
+    # discard wins because it gains a token instead of spending one.
+    t = _protect_table(1, end_when_perfect_lost=False)
     recs = {r.summary: r for r in advise(t.ms)}
     discard = recs["discard slot 1"]
     assert any("protective discard: tells p2" in r for r in discard.reasons)
@@ -232,8 +234,31 @@ def test_advisor_sees_protective_discard_vs_spending_the_last_token():
     other = recs["hint p1 white"]         # a real play hint, but the last token
     assert any("B2 (critical)" in r for r in other.reasons)
     assert other.score < discard.score
-    # A direct save on B2 is also fine (see D15); it's ranked by its own value.
-    assert "hint p2 blue" in recs
+    # The discard beats a direct save on B2: it gains a token instead (D15).
+    assert discard.score > recs["hint p2 blue"].score
+    assert advise(t.ms)[0].summary == "discard slot 1"
+
+
+def test_house_rule_prefers_the_safe_save_over_a_risky_protective_discard():
+    # Our rules: losing a last copy ends the game. My blind chop might be one
+    # (13%), so the save hint, which risks nothing, beats the protective discard.
+    t = _protect_table(1)
+    recs = advise(t.ms)
+    assert recs[0].summary == "hint p2 blue"
+    discard = next(r for r in recs if r.summary == "discard slot 1")
+    assert any("protective discard: tells p2" in r for r in discard.reasons)
+    assert any("losing it ends the game" in r for r in discard.reasons)
+
+
+def test_save_hint_wins_when_the_signal_would_protect_the_wrong_card():
+    # p1 has nothing to play, so a protective discard would protect p1's chop
+    # (a G3, not needed). p2's last B2 is only saved by a direct hint.
+    t = Scenario("regular", hands=["? ? ? ? ?", "G3 B4 W3 R3 Y3", "B2 W4 R3 G4 Y4"],
+                 discards="B2", hints=1)
+    recs = advise(t.ms)
+    disc = next(r for r in recs if r.summary == "discard slot 1")
+    assert any("tells p1" in r for r in disc.reasons)
+    assert recs[0].summary in ("hint p2 blue", "hint p2 2s")
 
 
 def test_no_protective_reading_with_two_tokens():

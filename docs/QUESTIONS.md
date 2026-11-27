@@ -244,11 +244,13 @@ Fixed:
   protective discard over my known play when the protected card is a last copy,
   since my play only waits a round. Its lookahead shows
   that spending the last token would force the critical discard.
-- *Open: at 0 tokens with no known play, the discard is forced, so it isn't
-  read as protective. Confirm.*
-- *Open: at 1 token, when a direct save hint on the critical card is possible, the
-  advisor currently prefers the save over the protective discard. Confirm or
-  correct.*
+- Confirmed: at 0 tokens with no known play, the discard is forced, so it isn't
+  read as protective.
+- Confirmed: the protective discard beats a save hint, since it gains a token
+  instead of spending one. A save hint is the backup for when the discard signal
+  would still lose a needed card. In code: the advisor gives the protective discard
+  a bonus only when the card it protects is the last copy. Otherwise, or if the
+  lookahead still sees a needed card discarded, the save hint wins.
 
 ### Self-play baseline (10-20 games each, so treat as rough)
 After D12-D14 (15-30 games, seeds 7/11): regular 3p ~19, rainbow 3p ~22, 5p ~14.

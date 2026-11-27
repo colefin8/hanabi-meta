@@ -143,3 +143,20 @@ def test_lookahead_quiet_when_next_player_can_play():
     recs = advise(t.ms)
     green = next(r for r in recs if r.summary == "hint p2 green")
     assert not any("lookahead" in x for x in green.reasons)
+
+
+def _maybe_early_five(**rules):
+    # Red is on 3; my red card is R4 (2 unseen) or R5 (1): a 67% blind play,
+    # and a miss on R5 would lose the only copy.
+    t = Scenario("regular", hands=["? ? ? ? ?", "G3 B4 W3 Y3 Y4", "G4 W4 B3 G2 Y2"],
+                 stacks="R3 B1", discards="R1 R1 R2", hints=1, **rules)
+    t.hint(1, 0, "R", touched=[1])
+    return next(r for r in advise(t.ms) if r.summary == "play slot 2")
+
+
+def test_risky_play_that_could_be_an_early_five_is_charged_for_ending_the_game():
+    house = _maybe_early_five()
+    official = _maybe_early_five(end_when_perfect_lost=False)
+    assert any("33% chance a miss loses the last copy (ends the game)" in r
+               for r in house.reasons)
+    assert house.score < official.score < 0

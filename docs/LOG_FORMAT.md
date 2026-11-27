@@ -68,7 +68,9 @@ A view:
 
 ### `game_end`
 `score`, `strikes`, `turns`. Live and spectator games also have `finished`, because a
-log can be written mid-game (live games: always `false`).
+log can be written mid-game (live games: always `false`). Self-play and spectator games
+also have `perfect` (every suit reached 5) and `end_reason` (e.g. `"perfect game"`,
+`"perfect game lost: every B2 is gone"`, `"struck out"`).
 
 ## Replaying
 

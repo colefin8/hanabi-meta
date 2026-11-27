@@ -60,6 +60,11 @@ class SlotView:
         total = sum(self.weights.values())
         return self.weights.get(card, 0) / total if total else 0.0
 
+    def p_where(self, pred) -> float:
+        """Probability that this slot's card satisfies `pred`."""
+        total = sum(self.weights.values())
+        return sum(w for c, w in self.weights.items() if pred(c)) / total if total else 0.0
+
 
 class BeliefState:
     def __init__(self, variant: Variant, observer: int) -> None:
@@ -157,6 +162,18 @@ class BeliefState:
     def _end_turn(self) -> None:
         if self.turns_left is not None:
             self.turns_left -= 1
+
+    def perfect_lost(self) -> str | None:
+        """Why a perfect game can no longer happen (None while it still can).
+
+        Under the house rule (`end_when_perfect_lost`) the game is then over.
+        """
+        from .bookkeeping import max_plays_left, perfect_lost
+        if self.strikes >= self.variant.max_strikes:
+            return "struck out"
+        return perfect_lost(self.variant, self.stacks, self.discards,
+                            max_plays_left(self.variant.num_players, self.deck_size,
+                                           self.turns_left))
 
     def has_turn(self, player: int, after: int) -> bool:
         """Will `player` get another turn, counting from the end of `after`'s turn?"""

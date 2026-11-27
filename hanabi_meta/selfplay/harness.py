@@ -3,8 +3,9 @@
 Each seat has its own MetaState (its own point of view; see table.Table). On
 its turn an agent takes the advisor's top recommendation.
 
-Statistics are collected so convention regressions show up as numbers:
-score, strikes, which convention readings fired, how plays of each kind
+Statistics are collected so convention regressions show up as numbers.
+The goal is a perfect game (our rules end the game as soon as one is
+impossible), so the perfect-game rate comes first; score, strikes, which convention readings fired, how plays of each kind
 (certain / convention / risky) turned out, and how expectations resolved.
 """
 from __future__ import annotations
@@ -36,6 +37,8 @@ class GameResult:
     #: Expectation outcomes across all seats' MetaStates.
     expectations: Counter = field(default_factory=Counter)
     fallbacks: int = 0  # turns where the advisor had no legal suggestion
+    perfect: bool = False
+    end_reason: str | None = None
 
 
 def _play_kind(reasons: list[str]) -> str:
@@ -87,8 +90,10 @@ def play_game(variant: Variant, seed: int, weights: Weights | None = None,
             result.expectations[e.status.value if e.status is not ExpStatus.PENDING
                                 else ("pending" if e.expected else "no_candidate")] += 1
     result.score, result.strikes, result.turns = game.score, game.strikes, game.turn
+    result.perfect, result.end_reason = game.is_perfect, game.end_reason
     if rec:
-        rec.end(game.score, game.strikes, game.turn)
+        rec.end(game.score, game.strikes, game.turn, perfect=game.is_perfect,
+                end_reason=game.end_reason)
         rec.append_to(recorder_path)
     return result
 
@@ -107,7 +112,11 @@ class BatchSummary:
             plays.update(r.plays)
             readings.update(r.readings)
             exps.update(r.expectations)
+        perfect = sum(r.perfect for r in rs)
+        reasons = Counter((r.end_reason or "?").split(":")[0] for r in rs)
         lines = [f"{self.variant}, {self.players} players, {len(rs)} games",
+                 f"  perfect games: {perfect}/{len(rs)} ({perfect / len(rs):.0%})",
+                 "  ended by: " + ", ".join(f"{k} {v}" for k, v in reasons.most_common()),
                  f"  score: mean {sum(scores) / len(scores):.1f}, min {min(scores)}, "
                  f"max {max(scores)}, strikeouts {sum(r.strikes >= 3 for r in rs)}",
                  "  plays (hit/miss):"]

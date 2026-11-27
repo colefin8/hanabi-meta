@@ -122,7 +122,8 @@ def build(header: list[str], actions: list[str], log: dict | None = None,
         except (ValueError, IndexError) as e:  # IllegalAction is a ValueError
             raise SpectatorError(f"action {i} '{line}': {e}") from e
     if rec is not None:
-        rec.end(game.score, game.strikes, game.turn, finished=game.is_over)
+        rec.end(game.score, game.strikes, game.turn, finished=game.is_over,
+                perfect=game.is_perfect, end_reason=game.end_reason)
     return sg
 
 

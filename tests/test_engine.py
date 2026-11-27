@@ -143,14 +143,71 @@ def test_discard_regains_hint():
     assert g.hints == 8
 
 
-def test_playing_five_returns_hint():
-    v = make_variant("regular", 2)
+def test_playing_five_returns_no_hint_by_house_rule():
+    g = Game(make_variant("regular", 2), seed=0)
+    g.hands[0][0] = Card(R, 5)
+    g.stacks[R] = 4
+    g.hints = 5
+    g.step(Action.play(0))
+    assert g.hints == 5 and g.stacks[R] == 5
+
+
+def test_playing_five_returns_hint_under_official_rules():
+    v = make_variant("regular", 2, five_returns_hint=True)
     g = Game(v, seed=0)
     g.hands[0][0] = Card(R, 5)
     g.stacks[R] = 4
     g.hints = 5
     g.step(Action.play(0))
     assert g.hints == 6 and g.stacks[R] == 5
+
+
+def test_game_ends_when_last_copy_is_discarded():
+    g = Game(make_variant("regular", 2), seed=0)
+    g.hints = 3
+    g.discards.append(Card(B, 2))
+    g.hands[0][0] = Card(B, 2)          # the other B2
+    assert not g.is_over
+    g.step(Action.discard(0))
+    assert g.is_over and g.end_reason == "perfect game lost: every B2 is gone"
+    assert g.score == 0                 # stacks are kept as the score
+
+
+def test_game_ends_when_a_five_is_misplayed():
+    g = Game(make_variant("regular", 2), seed=0)
+    g.stacks[R] = 3
+    g.hands[0][0] = Card(R, 5)          # R4 and R5 left: the 5 is played early
+    g.step(Action.play(0))
+    assert g.strikes == 1 and g.is_over and g.score == 3
+    assert "R5" in g.end_reason
+
+
+def test_trash_discard_does_not_end_the_game():
+    g = Game(make_variant("regular", 2), seed=0)
+    g.hints = 3
+    g.stacks[R] = 2
+    g.hands[0][0] = Card(R, 1)
+    g.step(Action.discard(0))
+    assert not g.is_over
+
+
+def test_game_ends_when_too_few_turns_remain():
+    v = make_variant("regular", 2)
+    g = Game(v, seed=0)
+    g.stacks = [5, 5, 5, 5, 1]          # 4 white cards still needed
+    del g.deck[1:]                      # 1 card + 2 final turns = at most 3 plays
+    assert g.is_over and "turns left" in g.end_reason
+    g.stacks = [5, 5, 5, 5, 2]          # 3 needed: still possible
+    assert not g.is_over
+
+
+def test_official_rules_play_on_after_perfect_is_lost():
+    g = Game(make_variant("regular", 2, end_when_perfect_lost=False), seed=0)
+    g.hints = 3
+    g.discards.append(Card(B, 2))
+    g.hands[0][0] = Card(B, 2)
+    g.step(Action.discard(0))
+    assert not g.is_over and g.perfect_lost == "every B2 is gone"
 
 
 def test_strikeout_scores_zero():
@@ -171,7 +228,7 @@ def test_strikeout_scores_zero():
 
 @pytest.mark.parametrize("n", [2, 3, 4, 5])
 def test_final_round_each_player_gets_one_turn(n):
-    v = make_variant("regular", n)
+    v = make_variant("regular", n, end_when_perfect_lost=False)
     g = Game(v, seed=11)
     g.hints = 0
     # Burn the deck down to one card by misplaying is unsafe (strikes); instead
