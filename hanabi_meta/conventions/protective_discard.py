@@ -1,12 +1,14 @@
 """Protective discard (docs/QUESTIONS.md D6, D15).
 
-With exactly one hint token left, a player who discards instead of hinting is
-protecting someone ahead: had they spent the last token, the first player
-after them with nothing to play and no token to hint with would have had to
-discard their chop. That player's chop is the card being protected.
+A discard that gets a token back for someone ahead protects them. The main
+case is 0 tokens: the discarder had a play they knew about but discarded
+instead. The edge case is 1 token: the discarder could have hinted but
+discarded instead. Either way, had they not discarded, the first player after
+them with nothing to play and no token to hint with would have had to discard
+their chop. That player's chop is the card being protected.
 
 The protected player isn't always the next one. Walk forward up to three
-seats from the discarder, as if they had spent the last token (0 left):
+seats from the discarder, as if they had played or hinted instead (0 left):
 * a player with a play they know about (hinted or expected by convention)
   plays it, and a 5 gives the token back;
 * a player with a token hints, using it up;
@@ -29,8 +31,9 @@ from ..engine.actions import DiscardEvent
 DEPTH = 3
 
 
-def is_protective(bs, ev: DiscardEvent, hints_before: int) -> bool:
-    return hints_before == 1
+def is_protective(bs, ev: DiscardEvent, hints_before: int, had_play: bool = False) -> bool:
+    """1 token: they could have hinted. 0 tokens: they could have played."""
+    return hints_before == 1 or (hints_before == 0 and had_play)
 
 
 def forced_discarder(ms, discarder: int, hints: int = 0, depth: int = DEPTH) -> int | None:

@@ -229,14 +229,23 @@ Fixed:
   last copy on their oldest slot.
 - With more than 1 token, never: a protective hint (a save) is better, or a play
   hint, leaving the call to someone later with fewer options.
-- In code (`conventions/protective_discard.py`): a discard with exactly 1 token
-  available is read as protective. Walk forward from the discarder (up to 3 seats)
-  as if they had spent the last token: players with a known or expected play play
+- It counts at 0 tokens too: that's the main case. The discarder had a play they
+  knew about and discarded instead, getting a token back for whoever would be
+  forced. 1 token is the edge case (they could have hinted), but it's read the
+  same way.
+- In code (`conventions/protective_discard.py`): a discard is read as protective at
+  0 tokens if the discarder had a known or expected play, or at exactly 1 token.
+  Walk forward from the discarder (up to 3 seats) as if they had played or hinted
+  instead (0 tokens left): players with a known or expected play play
   it (a 5 returns the token), players with a token hint. The first who'd be forced
   to discard has their chop flagged unsafe. If nobody would be forced, the discard
   is ordinary.
-- The advisor reads my own discard the same way at 1 token. Its lookahead shows
+- The advisor reads my own discard the same way. At 0 tokens it favours the
+  protective discard over my known play when the protected card is a last copy,
+  since my play only waits a round. Its lookahead shows
   that spending the last token would force the critical discard.
+- *Open: at 0 tokens with no known play, the discard is forced, so it isn't
+  read as protective. Confirm.*
 - *Open: at 1 token, when a direct save hint on the critical card is possible, the
   advisor currently prefers the save over the protective discard. Confirm or
   correct.*

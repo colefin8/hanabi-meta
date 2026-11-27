@@ -23,8 +23,9 @@ Other conventions handled here:
   engine's hands too (Game.reorder) but must NOT also feed those ReorderEvents
   back in, or the swap would happen twice.
 * playable 5: after the receiver of a dead color hint discards that card.
-* protective discard: with 1 token left, flags the chop of the first player
-  (up to 3 seats ahead) who'd have been forced to discard (`unsafe`).
+* protective discard: at 0 tokens with a known play, or at 1 token, flags the
+  chop of the first player (up to 3 seats ahead) who'd have been forced to
+  discard (`unsafe`).
 * duplicate signal (O4): a player discards a card they knew from their own info,
   while it is still needed. Another player's newest hinted card that could be
   that card is it, and they are expected to play it.
@@ -103,12 +104,13 @@ class MetaState:
             stacks_before = list(bs.stacks)
             hints_before = bs.hints
             knew = self.view(event.player)[event.slot].known
+            had_play = self._has_known_play(event.player, skip=uid)
             bs.apply(event)
             if isinstance(event, PlayEvent):
                 self._on_play(event, uid, was_known_playable, stacks_before)
             else:
                 self._actor_did_not_play(event.player, stacks_before)
-                self._on_discard(event, uid, hints_before, knew)
+                self._on_discard(event, uid, hints_before, knew, had_play)
         elif isinstance(event, (DrawEvent, ReorderEvent)):
             bs.apply(event)
         else:
@@ -142,7 +144,7 @@ class MetaState:
                     self._decline(e, ev.player, stacks_before)
 
     def _on_discard(self, ev: DiscardEvent, uid: int, hints_before: int,
-                    knew=None) -> None:
+                    knew=None, had_play: bool = False) -> None:
         self.unsafe.discard(uid)
         if knew == ev.card:
             self._duplicate_signal(ev)
@@ -151,7 +153,7 @@ class MetaState:
         if interp:
             self.interpretations.append(interp)
             self.hint_events.append(None)
-        if protective_discard.is_protective(self.bs, ev, hints_before):
+        if protective_discard.is_protective(self.bs, ev, hints_before, had_play):
             flagged = protective_discard.flag(self, ev, self.unsafe)
             if flagged is not None:
                 p, uid = flagged
@@ -159,6 +161,14 @@ class MetaState:
                             if s.uid == uid)
                 self.notes.append(f"protective discard by p{ev.player}: p{p}'s slot "
                                   f"{slot + 1} is unsafe to discard")
+
+    def _has_known_play(self, player: int, skip: int | None = None) -> bool:
+        """Does `player` know of a card they could play (by info or convention)?"""
+        expected = {e.expected.uid for e in self.expected_of(player)
+                    if e.expected and e.expected.uid is not None
+                    and (e.card is None or is_playable(e.card, self.bs.stacks))}
+        return any((sv.certainly_playable or sv.uid in expected) and sv.uid != skip
+                   for sv in self.view(player))
 
     def _duplicate_signal(self, ev: DiscardEvent) -> None:
         """O4: a known, still-needed card was discarded on purpose."""

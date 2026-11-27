@@ -60,6 +60,8 @@ class Weights:
     info_tiebreak: float = 0.5          # per focus card, scaled by how much it narrows
     touched_unlock_penalty: float = 10  # an unlock expected from an already-hinted card
     duplicate_signal_discard: float = 102  # O4: discard my known copy (unblocks their run)
+    protective_crit_bonus: float = 80   # 0 tokens: a protective discard saves a last copy
+                                        # (my known play isn't lost, only delayed)
     lookahead_depth: int = 3            # how many following players to simulate
     lookahead_crit: float = 80          # a teammate would be forced to discard a critical
     lookahead_misplay: float = 50       # a teammate would play a card that misses
@@ -106,8 +108,8 @@ def advise(ms: MetaState, w: Weights | None = None,
             after, hints = r.after, r.after.bs.hints
         elif r.action.type is ActionType.DISCARD:
             after, hints = ms, min(ms.bs.hints + 1, v.max_hints)
-            if ms.bs.hints == 1:
-                after = _as_protective(ms, r)
+            if ms.bs.hints == 1 or (ms.bs.hints == 0 and ms._has_known_play(ms.observer)):
+                after = _as_protective(ms, r, w)
         else:
             after, hints = ms, ms.bs.hints
         penalty, notes = lookahead(after, hints, w)
@@ -120,8 +122,10 @@ def advise(ms: MetaState, w: Weights | None = None,
 
 # ---- lookahead (D9) ---------------------------------------------------------------
 
-def _as_protective(ms: MetaState, r: Recommendation) -> MetaState:
-    """With 1 token, my discard is read as protective (D15): show what it protects.
+def _as_protective(ms: MetaState, r: Recommendation, w: Weights) -> MetaState:
+    """My discard is read as protective (D15): show what it protects.
+
+    Applies at 1 token, or at 0 tokens when I have a known play I'm skipping.
 
     Returns a copy where the protected player's chop is flagged unsafe, so the
     lookahead has them discard the next card instead.
@@ -142,6 +146,10 @@ def _as_protective(ms: MetaState, r: Recommendation) -> MetaState:
     r.reasons.append(f"protective discard: tells p{p} their slot {slot + 1}"
                      + (f" ({v.card_str(card)}, last copy) " if crit and card else " ")
                      + "is unsafe")
+    if crit and bs.hints == 0:
+        # No save hint is possible at 0 tokens; my known play only waits a round.
+        r.score += w.protective_crit_bonus
+        r.reasons.append("my known play can wait a round; the last copy can't be replaced")
     return after
 
 

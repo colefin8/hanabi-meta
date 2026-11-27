@@ -240,3 +240,33 @@ def test_no_protective_reading_with_two_tokens():
     t = _protect_table(2)
     t.discard(0, 0, "G1")
     assert t.ms.notes == []
+
+
+def test_zero_tokens_discarding_instead_of_a_known_play_is_protective():
+    # p1 knows R1 is playable but discards at 0 tokens: p2's last B2 is protected.
+    t = Scenario("regular", hands=["? ? ? ? ?", "R1 B4 W1 G3 Y3", "B2 W4 R3 G4 Y4",
+                                   "G2 W2 R2 Y2 B3"], discards="B2", hints=1)
+    t.hint(3, 1, "R")                     # hints -> 0; R1 expected of p1
+    t.discard(1, 1, "B4", draw="G1")
+    assert any("p2's slot 1 is unsafe" in n for n in t.ms.notes)
+
+
+def test_zero_tokens_forced_discard_is_not_protective():
+    # p1 has nothing to play: discarding is the default, not a signal.
+    t = Scenario("regular", hands=["? ? ? ? ?", "R4 B4 W3 G3 Y3", "B2 W4 R3 G4 Y4",
+                                   "G2 W2 R2 Y2 B3"], discards="B2", hints=0)
+    t.discard(1, 0, "R4", draw="G1")
+    assert t.ms.notes == []
+
+
+def test_advisor_at_zero_tokens_discards_over_a_play_to_protect():
+    # I know my newest is R1, but playing it leaves p1 with no token and their
+    # last B2 on chop. Discarding gets a token back for them.
+    t = Scenario("regular", hands=["? ? ? ?", "B2 W4 R3 G4", "G3 W3 R4 Y4"],
+                 discards="B2", hints=1)
+    t.hint(2, 0, "1", touched=[3])        # hints -> 0
+    recs = {r.summary: r for r in advise(t.ms)}
+    play, disc = recs["play slot 4"], recs["discard slot 1"]
+    assert any("B2 (critical)" in r for r in play.reasons)
+    assert any("protective discard: tells p1" in r for r in disc.reasons)
+    assert disc.score > play.score
