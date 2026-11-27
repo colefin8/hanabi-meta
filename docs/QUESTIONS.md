@@ -215,3 +215,14 @@ O3. Resolved. "Short rainbow" is variant 4 from the brief: a 6th suit with only 
 cards (two 1s, one each of 2-5). It matches "rainbow with only one 2, 3, and 4" from D5.
 *Assumed: it has its own rainbow hint and is touched by every color hint.* Tell me if
 it should be hinted only through colors, like variant 3.
+
+O4. Hinting the second copy of a card that's already hinted elsewhere (e.g. p1's Y2
+is hinted and someone hints p2's Y2 too).
+- Given only when p1 has other playable cards besides the Y2 (so p1 won't play it
+  right away) and p2's hint has its own purpose, e.g. it touches Y2 and Y3 in
+  playable order.
+- p1 can then discard their Y2. That discard tells p2 that one of p2's hinted
+  yellows is the other Y2.
+- Not implemented yet: the advisor still rejects every duplicate hint. Details to
+  confirm: whether p1 must know their card is exactly Y2, how p2 tells which yellow
+  is the 2, and what p2 reads if p1 plays their Y2 instead of discarding it.
