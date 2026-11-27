@@ -37,7 +37,7 @@ def test_misleading_skip_hint_is_rejected():
         "Y3 W5 B5 R4",
     ], hints=7)
     r = by_summary(t, "hint p1 green", include_rejected=True)
-    assert r.rejected and "misleading" in r.reasons[-1]
+    assert r.rejected and any("misleading" in x for x in r.reasons)
     assert all(x.summary != "hint p1 green" for x in advise(t.ms))
 
 
@@ -150,13 +150,18 @@ def _maybe_early_five(**rules):
     # and a miss on R5 would lose the only copy.
     t = Scenario("regular", hands=["? ? ? ? ?", "G3 B4 W3 Y3 Y4", "G4 W4 B3 G2 Y2"],
                  stacks="R3 B1", discards="R1 R1 R2", hints=1, **rules)
-    t.hint(1, 0, "R", touched=[1])
-    return next(r for r in advise(t.ms) if r.summary == "play slot 2")
+    # Plain hint info, no convention reading (by the Meta a red hint here would
+    # mean R4): slot 2 is red and 4+.
+    s = t.bs.public.hands[0][1]
+    s.possible = {t.variant.parse_card("R4"), t.variant.parse_card("R5")}
+    s.positive.append(("color", 0))
+    return next((r for r in advise(t.ms) if r.summary == "play slot 2"), None)
 
 
-def test_risky_play_that_could_be_an_early_five_is_charged_for_ending_the_game():
-    house = _maybe_early_five()
+def test_risky_play_that_could_lose_a_last_copy():
+    # Official rules: allowed, but charged for the chance of losing the R5.
     official = _maybe_early_five(end_when_perfect_lost=False)
-    assert any("33% chance a miss loses the last copy (ends the game)" in r
-               for r in house.reasons)
-    assert house.score < official.score < 0
+    assert any("33% chance a miss loses the last copy" in r for r in official.reasons)
+    assert official.score < 0
+    # Our rules (D22): never gambled; the card is held.
+    assert _maybe_early_five() is None

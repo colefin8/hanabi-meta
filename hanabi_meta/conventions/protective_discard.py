@@ -22,10 +22,21 @@ play hint that leaves the call to someone with fewer options) is better.
 "Chop" = the oldest card that has no hint on it and isn't already flagged as
 unsafe. Each repeat of the signal on the same player flags the next card along.
 Only discards count, never plays.
+
+"Unsafe" means GAME-ENDING (2026-11-26): the protected card is a last copy of a
+card still needed. Discards that only lose a card we'd rather keep are a normal
+part of the game and are never signalled. So:
+* the protected player treats their flagged card as a last copy when choosing
+  a discard, which makes it effectively saved. Its identity is NOT narrowed:
+  that turned wrong flags into confident misplays in self-play;
+* a chop that can't be critical from the protected player's view is never
+  flagged, and a flag drops once the card can no longer be critical;
+* the discarder only gives the signal when the card really is a last copy
+  (the advisor penalises a discard that would flag anything else).
 """
 from __future__ import annotations
 
-from ..belief.bookkeeping import is_playable
+from ..belief.bookkeeping import is_critical, is_playable
 from ..engine.actions import DiscardEvent
 
 DEPTH = 3
@@ -64,13 +75,37 @@ def chop_uid(bs, player: int, unsafe: set[int]) -> int | None:
     return None
 
 
+def critical_cards(bs) -> set:
+    """Every card identity that is currently a last copy of a needed card."""
+    v = bs.variant
+    return {c for c in v.all_cards() if is_critical(v, c, bs.stacks, bs.discards)}
+
+
+def could_be_critical(ms, player: int, uid: int) -> bool:
+    """From `player`'s own view (no conventions), could this card be a last copy?"""
+    sv = next((sv for sv in ms.bs.view(player) if sv.uid == uid), None)
+    return sv is not None and sv.maybe_critical
+
+
 def flag(ms, ev: DiscardEvent, unsafe: set[int]) -> tuple[int, int] | None:
-    """Mark the protected player's chop unsafe; return (player, uid), or None."""
+    """Mark the protected player's chop unsafe; return (player, uid), or None.
+
+    Only a chop that could be critical from the protected player's view is
+    flagged (everyone can work that out, so every seat flags the same card).
+    """
     p = forced_discarder(ms, ev.player)
     if p is None:
         return None
     uid = chop_uid(ms.bs, p, unsafe)
-    if uid is None:
+    if uid is None or not could_be_critical(ms, p, uid):
         return None
     unsafe.add(uid)
     return p, uid
+
+
+def prune(ms, unsafe: set[int]) -> None:
+    """Drop flags on cards that can no longer be critical (or have left the hand)."""
+    holder = {s.uid: p for p, h in enumerate(ms.bs.public.hands) for s in h}
+    for uid in list(unsafe):
+        if uid not in holder or not could_be_critical(ms, holder[uid], uid):
+            unsafe.discard(uid)

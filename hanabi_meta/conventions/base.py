@@ -97,6 +97,9 @@ class Interpretation:
     expectations: list[Expectation] = field(default_factory=list)
     #: Narrowing of the observer's own slots implied by this reading (uid -> cards).
     constraints: dict[int, set[Card]] = field(default_factory=dict)
+    #: Multi-card hint to me (D19): the touched cards, newest -> oldest from the
+    #: one that plays first. The first one left in my hand is the next to play.
+    chain: list[int] = field(default_factory=list)
 
 
 # ---- helpers shared by conventions -------------------------------------------

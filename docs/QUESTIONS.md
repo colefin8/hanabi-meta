@@ -94,7 +94,7 @@ anyone to a wrong inference.
   - *Open detail: does "could give a hint" mean any hint token was available, or that a
     useful hint was visible? I'll assume a token was available and refine it with
     examples.*
-  - *Superseded by D15 (who is protected, and when).*
+  - *Superseded by D15 (who is protected, and when) and D16 (only game-ending cards).*
 
 ### D7. Inferring a playable 5 (dead color hint, then a discard)
 - Trigger: a player is color-hinted on a card that is clearly dead, and discards it,
@@ -157,7 +157,7 @@ anyone to a wrong inference.
 - **Check the receiver's reading:** before suggesting a hint, the advisor also reads
   it from the receiver's side. If the receiver would conclude "self skip-level" and
   blind-play a newest card that isn't playable, the hint is rejected.
-- **Hint to me:** my hinted card is only narrowed to "not trash". It can still be
+- **Hint to me (superseded by D18):** my hinted card is only narrowed to "not trash". It can still be
   waiting on a self skip-level. A hinted card that might be waiting on a teammate's
   unlock is never blind-played.
 - **Playable 5:** needs the stack at 2+. With more than one card missing from my
@@ -197,7 +197,8 @@ Fixed:
 - In code: on a multi-card hint to me, the newest touched card that could be
   playable is narrowed to "playable now, or unlocked by a card a teammate visibly
   holds". Older touched cards aren't narrowed.
-- Not Meta, just odds: after the first card plays, holding the next one until it's
+- *Superseded by D19:* the next touched card is the next play, not a probability call.
+- (Old) Not Meta, just odds: after the first card plays, holding the next one until it's
   more certain is often right early in the game (fewer cards played or discarded,
   so the hinted cards are less likely to line up). The advisor plays it only when
   its probability clears the risky-play threshold, which reflects this.
@@ -251,6 +252,156 @@ Fixed:
   would still lose a needed card. In code: the advisor gives the protective discard
   a bonus only when the card it protects is the last copy. Otherwise, or if the
   lookahead still sees a needed card discarded, the save hint wins.
+
+### D16. "Unsafe" means game-ending (2026-11-26)
+Decided: a protective discard flags a card only if discarding it would **end the
+game**, meaning it's a last copy of a card still needed. Losing a card we'd rather
+keep is part of the game and is never signalled. Self-play found flags piling up
+until every unhinted card was flagged, which forced discards of saved 5s (involved
+in 221 of 307 losing discards; see docs/SELFPLAY_FINDINGS.md).
+- The protected player treats the flagged card as a last copy when choosing a
+  discard, so it's effectively saved. Its identity is not narrowed: a first
+  version did narrow it, and wrong flags turned into confident misplays (40 of 53
+  "certain" misplays in self-play).
+- A chop that can't be critical from the protected player's own view isn't flagged.
+  A flag drops once the holder's info shows it can't be critical.
+- The discarder only gives the signal when the card really is a last copy. The
+  advisor penalises a discard that would flag anything else as misleading
+  (`Weights.misleading_protective`), so it plays or hints instead.
+- If every card is hinted or flagged, discard the card least likely to be a last
+  copy (then least likely playable, then oldest), not slot 1.
+
+### D17. A multi-card hint that touches a chop last copy is still newest-first (2026-11-26)
+Confirmed: a color hint touching a last copy on chop (e.g. Y2) plus other cards of
+that color (e.g. Y4, newest), none known to be playable, is still read by D13: the
+newest touched card plays first. There's no chop focus. So a save has to be a hint
+that doesn't read as a play on another card (often a rank hint), or wait. Self-play:
+about half the missed saves were multi-card color saves rejected for this reason.
+
+### D18. Receivers read by the Meta; givers own the ambiguity (2026-11-27)
+Decided: the receiver knows the Meta and takes its reading. It doesn't hedge
+against readings a giver following the Meta would avoid. The giver tries never
+to give a hint that can be read more than one way. When every option carries
+some risk, the giver picks the hint whose wrong readings are least bad: ending
+the game is worse than a strike, and a strike is worse than a wasted turn.
+- **Hint to me (replaces the D11 bullet):** back to D3b. A single hinted card is
+  narrowed to "playable now", "unlocked by a card I can see in a teammate's
+  playable slot", or a critical non-5 with no visible unlock (a save). Self
+  skip-level only when none of those is possible. So a plain play hint is a
+  certain play. A "play or save" card (e.g. B1 or the last B2) stays open, and the
+  receiver holds it, since a risky play that could lose a last copy is charged
+  for it.
+- **The giver reads its hint as each teammate will.** Each seat keeps a model of
+  every teammate, fed the same events, with their inferences so far. It's exact
+  except for the giver's own hand, which the model can't see (the teammate can).
+- **What counts as a harmful reading,** checked against the real cards: a blind
+  play that misses (self skip-level newest card, a multi-card lead, a card now
+  "certainly playable"); a narrowing that leaves out the real card; a self
+  skip-level whose unlock is another suit; a risky blind play the receiver
+  would take that misses (half cost); a bystander concluding they hold an
+  unlock and blind-playing a card that misses.
+- **Cost:** a strike costs `misread_strike` (100), more than any hint is worth, so
+  a clean option always wins. A misread that loses a last copy, or happens on
+  the last strike, costs `game_loss` (300). An ambiguous hint is kept at that
+  cost rather than rejected, so it can still beat a discard that risks the game.
+  Structural D3c rejections (dead or unclear readings, re-hints read as
+  skip-levels) stay, with the last-resort fallback.
+- **Plays only count if the receiver can see them.** A hinted playable card the
+  receiver can't tell from a non-playable one gets held, so it isn't credited as
+  a play (`unclear_play` instead of `per_new_play`).
+- **Stall:** a harmless hint that achieves nothing is always on the list
+  (`stall_hint`, -20). It's chosen only over options that risk the game, e.g. a
+  blind play that could lose a last copy. Without it, bots gambled with 3 tokens.
+- **Plays first (2026-11-27):** each play a hint produces is worth `per_new_play`
+  (25, was 10). A skip-level also counts the hinted card that plays once it's
+  unlocked. A chop save, or a 5 save, can wait (`save_can_wait`, 40, below a
+  play hint) when the target already knows a play (so they won't discard next
+  turn) and at least 2 tokens will be left. An urgent save (110, 5s 100) still
+  beats any play hint.
+
+### D19. Every touched card of a multi-card hint plays, newest -> oldest (2026-11-27)
+Decided: after the first card of a multi-card hint plays, the next touched card is
+the next play. It isn't a probability call any more. Examples are with two 3s.
+- **Read right after the card before it plays.** It's narrowed to "playable now"
+  or "waiting on an unlock a teammate visibly holds". It's played once every card
+  it could be is playable. So the second 3 plays only if some stack is at 2.
+- **Hedge:** if it could also be a 3 whose 2 a teammate holds (e.g. hinted to
+  them), wait until that 2 is played.
+- **Nowhere to go means the chain ends.** If nothing it could be is playable at
+  that moment, hold it. A play elsewhere later doesn't make it a play: the hint
+  meant "next", not "some day". Self-play found a second 4 read as B4 turns later,
+  once someone played a B3.
+- A miss or a discard of a chain card ends the chain.
+- **Only newly touched cards join the chain.** A card that was already hinted keeps
+  its meaning (D3b collateral). Self-play: a saved M2 was touched again by a later
+  "2", and after the new card played it read as "the next 2" (G2).
+- **Giver:** plays the whole chain forward through the receiver's model. Every
+  card that really plays in a row counts as a play. If the receiver would play
+  one that misses (e.g. R2 then a G2 they'd read as B2), that's a strike (D18).
+- **The giver also checks what its hint sets off.** If the first card waits on a
+  teammate's visible unlock, the simulation plays that unlock first. After each
+  simulated play, every card the receiver would now think is certainly playable
+  is checked. Making someone play a card can move an *older* multi-card hint of
+  theirs on, and the next card is then read on the new board. Self-play found a
+  "2" hint whose B2 play turned an old blue B4 into "certainly B3".
+
+### D20. A rank hint on the chop with nowhere to play is a last-copy save (2026-11-27)
+Decided: a rank hint touching my chop, where that rank can't be a play (no stack
+one below it, no card one below it in a teammate's playable slot), is a save. The
+card is narrowed to the last copies it could be. It isn't a self skip-level.
+- Example: stacks at 1, 2 or 4, no 3 in a playable slot, one Y4 gone. "4" on my
+  oldest card means it's the other Y4 (in short rainbow, M4 too: one copy).
+- Color saves on a last copy usually need two hints. The color reads as a play
+  first ("B1 or the last B2"), and the giver's D18 checks treat it that way.
+
+### D21. Protective discards come first; a watched chop is presumed safe (2026-11-27)
+Decided: last copies are normally protected by protective discards (D15, D16).
+Save hints are the last resort. The other side of that, by D6 ("discard your
+oldest card unless you can infer it is unsafe"): if my chop was already my chop
+when the previous player acted, and they didn't protect it, I treat it as safe.
+- In code: the discard's last-copy risk counts at `watched_chop_risk` (25%)
+  instead of my own odds in full. A chop that's new since then (I just drew into
+  it, or a card in front of it left) counts in full.
+- Self-play: 33 of 46 losses on a hinted last-copy misplay were risky blind
+  plays at 0 tokens. The bot judged its chop discard as risky as the blind play,
+  because it ignored that teammates had watched the chop.
+- So with 1 token, a protective discard now beats a save hint, even under our
+  rules, when my own chop was watched.
+
+### D22. Never risky-play a card that could be a last copy (2026-11-27)
+Decided: at our table almost nobody risky-plays a hinted last copy. Under our rules
+(perfect game or bust), a risky play whose miss could lose a last copy isn't an
+option. Hold the card, and discard the presumed-safe chop (D21) or stall instead.
+A risky play where every miss is a card with another copy left is still allowed.
+- Self-play (v13): 29 of 40 games lost to a hinted last-copy misplay were risky
+  plays like "B3 or G3, 67% playable". The advisor took them because every other
+  option already scored badly.
+- Under official rules the play is still allowed, but charged for the chance.
+
+### Table setup (2026-11-27)
+We usually play 3-5 players, short rainbow (rainbow suit 2/1/1/1/1), perfect game
+or bust, and restart a deal with few opening plays. We win about 5% of games.
+Self-play mirrors this with `--variant short_rainbow --players 3 4 5
+--min-opening-plays 3`, which redeals when fewer than 3 different 1s are dealt.
+
+### Fixed along the way (2026-11-27)
+- **A play known only by convention isn't a decline (D2).** A card known from a
+  plain play hint (D18 narrowing) played before an expected unlock used to count
+  as declining the unlock. Every seat then passed the unlock on, and the next
+  candidate blind-played a wrong card (about half the bystander skip-level misses).
+- **A protective discard isn't a decline either (D2, D12).** If the player
+  expected to play an unlock makes a protective discard instead, the play is only
+  delayed, like an urgent save. Only an action with no such reason passes it on:
+  then the next candidate (possibly me) takes it as theirs and plays the card
+  that was inferred at the time of the hint (its slot then, not a later draw).
+- **The unlock holder must read the hint the same way.** If the giver counts on
+  a visible holder to play an unlock, the holder's own reading must expect it too.
+  Example: red on M2 + R2 in short rainbow. The giver sees the holder's R1. The
+  holder doesn't, and M2 is a single copy, so the holder reads a save. That's a
+  strike (D18): the others see a decline, and the next one blind-plays.
+- **Bystanders are checked for every hint kind.** A card that's critical to the
+  giver may not be to a bystander who sees another copy, so the giver's save
+  becomes their skip-level.
 
 ### Self-play baseline (10-20 games each, so treat as rough)
 After D12-D14 (15-30 games, seeds 7/11): regular 3p ~19, rainbow 3p ~22, 5p ~14.

@@ -103,6 +103,7 @@ class BatchSummary:
     variant: str
     players: int
     results: list[GameResult]
+    restarts: int = 0
 
     def text(self) -> str:
         rs = self.results
@@ -114,7 +115,8 @@ class BatchSummary:
             exps.update(r.expectations)
         perfect = sum(r.perfect for r in rs)
         reasons = Counter((r.end_reason or "?").split(":")[0] for r in rs)
-        lines = [f"{self.variant}, {self.players} players, {len(rs)} games",
+        lines = [f"{self.variant}, {self.players} players, {len(rs)} games"
+                 + (f" ({self.restarts} deals restarted)" if self.restarts else ""),
                  f"  perfect games: {perfect}/{len(rs)} ({perfect / len(rs):.0%})",
                  "  ended by: " + ", ".join(f"{k} {v}" for k, v in reasons.most_common()),
                  f"  score: mean {sum(scores) / len(scores):.1f}, min {min(scores)}, "
@@ -134,12 +136,30 @@ class BatchSummary:
         return "\n".join(lines)
 
 
+def opening_plays(variant: Variant, seed: int) -> int:
+    """Distinct playable cards dealt (one per suit with a 1 in some hand)."""
+    from ..engine.game import Game
+    g = Game(variant, seed=seed)
+    return len({c.suit for h in g.hands for c in h if c.rank == 1})
+
+
 def run_batch(kind: str, players: int, games: int, seed: int = 0,
-              log: Path | None = None, log_views: bool = False) -> BatchSummary:
+              log: Path | None = None, log_views: bool = False,
+              min_opening_plays: int = 0) -> BatchSummary:
+    """Play `games` games. With `min_opening_plays`, a deal with fewer distinct
+    opening plays is restarted, as our table does (the next seed tried is
+    +100000, so results stay reproducible)."""
     v = make_variant(kind, players)
-    results = [play_game(v, seed + i, recorder_path=log, log_views=log_views)
-               for i in range(games)]
-    return BatchSummary(kind, players, results)
+    results, restarts = [], 0
+    for i in range(games):
+        s = seed + i
+        while min_opening_plays and opening_plays(v, s) < min_opening_plays:
+            s += 100000
+            restarts += 1
+        results.append(play_game(v, s, recorder_path=log, log_views=log_views))
+    out = BatchSummary(kind, players, results)
+    out.restarts = restarts
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -150,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--games", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--log", type=Path, help="append games to this JSONL file")
+    ap.add_argument("--min-opening-plays", type=int, default=0,
+                    help="restart deals with fewer distinct playable 1s dealt")
     ap.add_argument("--views", action="store_true",
                     help="log every seat's view before each turn (bigger logs)")
     args = ap.parse_args(argv)
@@ -157,7 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     for kind in kinds:
         for n in args.players:
             t0 = time.perf_counter()
-            s = run_batch(kind, n, args.games, args.seed, args.log, args.views)
+            s = run_batch(kind, n, args.games, args.seed, args.log, args.views,
+                          args.min_opening_plays)
             print(s.text())
             print(f"  ({time.perf_counter() - t0:.1f}s)\n")
     return 0

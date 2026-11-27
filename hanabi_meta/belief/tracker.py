@@ -70,6 +70,9 @@ class BeliefState:
     def __init__(self, variant: Variant, observer: int) -> None:
         self.variant = variant
         self.observer = observer
+        #: Players whose cards this state can't see: the observer, plus (in a
+        #: model of a teammate, see `model_for`) the seat building the model.
+        self.hidden: set[int] = {observer}
         self.public = PublicKnowledge(variant)
         n = variant.num_players
         #: Actual cards in each hand where the observer can see them, else None.
@@ -119,14 +122,29 @@ class BeliefState:
         unseen_counts(variant, bs.seen_by(observer))  # raises if impossible
         return bs
 
+    def model_for(self, player: int) -> "BeliefState":
+        """`player`'s belief state as far as this observer can rebuild it.
+
+        Same public info and the same visible hands, except `player`'s own
+        cards (they can't see them) and the observer's (we can't). Fed the same
+        events, it tracks what `player` sees, minus the observer's hand.
+        """
+        import copy
+        m = copy.deepcopy(self)
+        m.observer = player
+        m.hidden = {player, self.observer}
+        m.hands[player] = [None] * len(m.hands[player])
+        m.hands[self.observer] = [None] * len(m.hands[self.observer])
+        return m
+
     # ---- event application --------------------------------------------------
     def apply(self, event: Event) -> None:
         v = self.variant
         if isinstance(event, DrawEvent):
-            if event.player != self.observer and event.card is None:
+            if event.player not in self.hidden and event.card is None:
                 raise ValueError("observer must be told the cards other players draw")
             self.hands[event.player].append(
-                None if event.player == self.observer else event.card)
+                None if event.player in self.hidden else event.card)
             self.public.add_slot(event.player, self.turn)
             self.deck_size -= 1
             if self.deck_size == 0:

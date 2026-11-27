@@ -89,6 +89,11 @@ def interpret_hint(bs: BeliefState, hint: HintEvent, hint_index: int) -> Interpr
                               reason="a 5 hint is a safety hint")
     if hint.target == bs.observer:
         return _interpret_own(bs, hint, hint_index)
+    if hint.target in bs.hidden:
+        # A model of a teammate, and the hint went to the seat building it:
+        # MetaState passes that seat's own reading in instead (see models).
+        return Interpretation(**base, kind=HintKind.UNCLEAR, focus=uids,
+                              reason="the target's cards aren't visible here")
 
     cs = v.card_str
     plays, skips, unexplained, dead = [], [], [], []
@@ -179,18 +184,42 @@ def _interpret_own(bs: BeliefState, hint: HintEvent, hint_index: int) -> Interpr
         interp = Interpretation(
             **base, kind=HintKind.PLAY, focus=list(explained),
             reason="my hinted card is playable now or once a teammate plays a visible "
-                   "unlock" + (", or a self skip-level (unlock in my own newest card)"
-                               if ambiguous else ""))
+                   "unlock" + (" (not a self skip-level: the giver avoids that reading "
+                               "when this one exists)" if ambiguous else ""))
         if len(hint.touched) == 1:
-            # Pruning: a hint never points at a trash card (that would be a
-            # trash hint). Self skip-level stays possible: the unlock may sit
-            # in my own newest card, which the hinter sees and I don't.
+            # Read by the Meta (D3b, D18): the card is playable now, unlocked by
+            # a card I can see in a teammate's playable slot, or a critical
+            # non-5 with no visible unlock (a save). A self skip-level isn't
+            # possible here: the giver must not give one when this reading
+            # exists, since I'd read it this way.
             i = hint.touched[0]
-            interp.constraints[uids[0]] = {
-                c for c in views[i].candidates if not is_trash(v, c, bs.stacks, bs.discards)}
+            saves = {c for c in views[i].candidates
+                     if c.rank != 5 and c not in explained[uids[0]]
+                     and not is_trash(v, c, bs.stacks, bs.discards)
+                     and is_critical(v, c, bs.stacks, bs.discards)
+                     and locate_unlocks(bs, c, hint.giver)[1]}
+            interp.constraints[uids[0]] = set(explained[uids[0]]) | saves
         else:
             _newest_first(bs, interp, hint, explained)
         return interp
+    if hint.kind == "rank":
+        # D20: a rank hint on my chop that can't be a play (no stack ready for
+        # it, no unlock visible) is a save of a last copy, not a self
+        # skip-level. E.g. no stack at 3 and no 3 in a playable slot, one Y4
+        # gone: "4" on my oldest card says it's the other Y4.
+        chop = next((i for i, s in enumerate(hand) if len(s.positive) <= (i in hint.touched)),
+                    None)
+        if chop in hint.touched:
+            crit = {c for c in views[chop].candidates
+                    if not is_trash(v, c, bs.stacks, bs.discards)
+                    and is_critical(v, c, bs.stacks, bs.discards)}
+            if crit:
+                interp = Interpretation(
+                    **base, kind=HintKind.SAVE, focus=[hand[chop].uid],
+                    reason=f"rank hint on my chop with nowhere to play: save of a last "
+                           f"copy ({'/'.join(sorted(v.card_str(c) for c in crit))})")
+                interp.constraints[hand[chop].uid] = crit
+                return interp
     if self_needed and not all_critical:
         newest = [s for s in hand if not s.touched]
         if not newest:
@@ -210,27 +239,51 @@ def _interpret_own(bs: BeliefState, hint: HintEvent, hint_index: int) -> Interpr
 
 def _newest_first(bs: BeliefState, interp: Interpretation, hint: HintEvent,
                   explained: dict[int, set[Card]]) -> None:
-    """Multi-card hint to me: the touched cards play newest -> oldest (D13).
+    """Multi-card hint to me: the touched cards play newest -> oldest (D13, D19).
 
     The newest touched card that could be playable is read as the one to play
     first, unless my info rules it out (then the next newest). It's narrowed to
-    "playable now, or unlocked by a card a teammate visibly holds". Older
-    touched cards aren't narrowed: whether to play the next one after it is a
-    probability call, which gets safer as the game goes on.
+    "playable now, or unlocked by a card a teammate visibly holds". The rest
+    follow in order (`interp.chain`; see `chain_options` for how each next one
+    is read once the one before it has played).
     """
     hand = bs.public.hands[bs.observer]
-    for i in sorted(hint.touched, reverse=True):
+    order = sorted(hint.touched, reverse=True)
+    for k, i in enumerate(order):
         uid = hand[i].uid
         opts = explained.get(uid, set())
         if not any(is_playable(c, bs.stacks) for c in opts):
             continue
         interp.constraints[uid] = set(opts)
+        # Cards that were already hinted keep the meaning they had (e.g. a
+        # save): only newly touched cards join the chain (D19, D3b collateral).
+        interp.chain = [uid] + [hand[j].uid for j in order[k + 1:]
+                                if len(hand[j].positive) == 1]
         if all(is_playable(c, bs.stacks) for c in opts):
             interp.expectations.append(Expectation(
                 None, [Candidate(bs.observer, uid, "lead")],
                 "multi-card hint: the newest hinted card plays first", interp.hint_index,
                 possible=set(opts)))
         return
+
+
+def chain_options(bs: BeliefState, candidates: set[Card], giver: int) -> set[Card] | None:
+    """The next card of a multi-card hint to me, after the one before it played (D19).
+
+    It's the next play, so it's read as playable now, or waiting on an unlock a
+    teammate visibly holds (then I wait for that card to be played first).
+    Read once, right after the card before it played. When nothing it could be
+    is playable then (e.g. a second 3 with no stack at 2), there's nowhere for
+    it to go: the chain ends and I just hold it.
+    """
+    v = bs.variant
+    playable = {c for c in candidates if is_playable(c, bs.stacks)}
+    if not playable:
+        return None
+    waiting = {c for c in candidates if c not in playable
+               and not is_trash(v, c, bs.stacks, bs.discards)
+               and not locate_unlocks(bs, c, giver)[1]}
+    return playable | waiting
 
 
 def continue_self_shotgun(bs: BeliefState, interp: Interpretation, done: Expectation,

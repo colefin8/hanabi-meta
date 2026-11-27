@@ -24,7 +24,8 @@ class Table:
                  deck: Sequence[Card] | None = None) -> None:
         self.variant = variant
         self.game = Game(variant, seed=seed, deck=deck)
-        self.seats = [MetaState.new(variant, p) for p in range(variant.num_players)]
+        self.seats = [MetaState.new(variant, p, models=True)
+                      for p in range(variant.num_players)]
         for e in self.game.deal_events:
             for p, ms in enumerate(self.seats):
                 ms.apply(mask_for(p, e))

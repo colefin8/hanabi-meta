@@ -13,8 +13,10 @@ Hints     each candidate hint is *simulated*: we apply it to a copy of the
           MetaState and read the Interpretation the conventions produce. A hint
           whose reading would be dead or unclear is rejected as misleading
           (docs/QUESTIONS.md D3c). Otherwise it is valued by what it achieves:
-          new plays, unlocks via skip-level, saves of a critical chop card,
-          trash marking. A play/skip hint on a second copy of a card that is
+          new plays (only those the receiver can see), unlocks via skip-level,
+          saves of a critical chop card, trash marking. Each hint is also read
+          the way the receiver and bystanders will (their teammate models, D18);
+          a harmful reading is charged a strike or the game, not rejected. A play/skip hint on a second copy of a card that is
           already hinted or expected elsewhere is rejected (it wastes a card or
           a strike). In the endgame, a skip-level whose unlock holder or target
           has no turn left is rejected: a direct hint is better.
@@ -35,7 +37,7 @@ from dataclasses import dataclass, field
 from ..belief.bookkeeping import is_critical, is_playable, is_trash
 from ..conventions.base import HintKind
 from ..conventions.meta_state import MetaState
-from ..engine.actions import Action, ActionType, HintEvent
+from ..engine.actions import Action, ActionType, DrawEvent, HintEvent, PlayEvent
 from ..engine.variant import Variant
 
 
@@ -45,13 +47,17 @@ class Weights:
     play_five_bonus: float = 3          # a 5 also returns a hint token (official rules)
     risky_min_p: float = 0.6            # never suggest a blind play below this
     risky_scale: float = 50             # score = risky_scale * p(playable)
-    save_chop: float = 85               # saving a critical card on someone's chop
+    save_chop: float = 110              # saving a critical card on someone's chop
+    #: A chop save that can wait: the target has a known play (they won't
+    #: discard next turn) and tokens remain for a later save. Below a play hint,
+    #: so plays come first.
+    save_can_wait: float = 40
     save_not_chop: float = 15
     play_hint_base: float = 50
-    per_new_play: float = 10
+    per_new_play: float = 25           # each play a hint produces (>2/hint wins games)
     skip_hint_base: float = 45
     trash_hint_per_card: float = 12
-    safety_five_chop: float = 70
+    safety_five_chop: float = 100
     safety_five_other: float = 5
     discard_base: float = 25
     discard_trash_bonus: float = 15
@@ -64,11 +70,35 @@ class Weights:
     info_tiebreak: float = 0.5          # per focus card, scaled by how much it narrows
     touched_unlock_penalty: float = 10  # an unlock expected from an already-hinted card
     duplicate_signal_discard: float = 102  # O4: discard my known copy (unblocks their run)
-    protective_crit_bonus: float = 80   # a protective discard that saves a last copy
+    protective_crit_bonus: float = 110  # a protective discard that saves a last copy
                                         # (beats a save hint; see D15)
+    #: My discard would be read as protective (= "your chop is game-ending") but
+    #: the card isn't a last copy: misleading, and it piles up flags.
+    misleading_protective: float = 40
+    #: A misleading hint (normally rejected, D3c) as a last resort when every
+    #: other option scores below -game_loss/2 (likely loses the game). The
+    #: lookahead still charges for any misplay the misreading would cause.
+    misleading_hint_fallback: float = 150
+    #: A reading of my hint (by the receiver or a bystander) that would cost a
+    #: strike (D18). More than any hint is worth, so an unambiguous option always
+    #: wins; an ambiguous hint still beats risking the game.
+    misread_strike: float = 150
+    #: D21: my chop sat there through the previous player's turn and they didn't
+    #: protect it, so it's presumed safe. Only this share of its last-copy risk
+    #: counts (the Meta's safety net is the teammates, not my own odds).
+    watched_chop_risk: float = 0.25
+    #: A harmless hint that achieves nothing: only chosen over options that
+    #: risk the game (a blind play that could lose a last copy, a risky discard).
+    stall_hint: float = -20
+    #: A hinted card the receiver can't tell is playable: they hold it, so it
+    #: isn't a play from this hint (only a small credit for marking it).
+    unclear_play: float = 3
     lookahead_depth: int = 3            # how many following players to simulate
     lookahead_crit: float = 80          # a teammate would be forced to discard a critical
     lookahead_misplay: float = 50       # a teammate would play a card that misses
+    #: A teammate with no known play and a last copy on chop, while tokens are
+    #: left: they may discard instead of hinting (D21). Share of the loss charged.
+    lookahead_may_discard: float = 0.5
     #: Losing the last copy of a needed card. With `end_when_perfect_lost` this
     #: ends the game, so it replaces the smaller crit penalties above.
     game_loss: float = 300
@@ -88,6 +118,9 @@ class Recommendation:
     rejected: bool = False
     #: State after this action (hints only), used by the lookahead.
     after: MetaState | None = field(default=None, repr=False, compare=False)
+    #: Hints only: what the harmful readings cost (D18), also for rejected
+    #: hints, so the last-resort fallback picks the least harmful one.
+    risk_cost: float = 0.0
 
 
 def describe(v: Variant, a: Action, me: int | None = None) -> str:
@@ -106,6 +139,22 @@ def chop_index(ms: MetaState, player: int) -> int | None:
         if not s.touched and s.uid not in ms.unsafe:
             return i
     return None
+
+
+def last_resort_index(ms: MetaState, player: int) -> int:
+    """No chop (every card hinted or flagged): the card least likely to end the
+    game, from `player`'s own view. Then least likely playable, then oldest."""
+    views = ms.view(player)
+    flagged = {s.uid for s in ms.bs.public.hands[player] if s.uid in ms.unsafe}
+    return min(range(len(views)),
+               key=lambda i: (1.0 if views[i].uid in flagged else views[i].p_critical,
+                              views[i].p_playable, i))
+
+
+def discard_index(ms: MetaState, player: int) -> int:
+    """Where `player` discards: chop, else the last resort."""
+    chop = chop_index(ms, player)
+    return chop if chop is not None else last_resort_index(ms, player)
 
 
 def advise(ms: MetaState, w: Weights | None = None,
@@ -127,6 +176,17 @@ def advise(ms: MetaState, w: Weights | None = None,
         penalty, notes = lookahead(after, hints, w)
         r.score -= penalty
         r.reasons += notes
+    best = max((r.score for r in recs if not r.rejected), default=None)
+    if best is None or best < -w.game_loss / 2:
+        # Everything left risks ending the game: a misleading hint (at worst a
+        # misplay or a wasted turn) beats a near-certain loss.
+        for r in recs:
+            if r.rejected and r.action.is_hint and r.after is not None:
+                penalty, notes = lookahead(r.after, r.after.bs.hints, w)
+                r.rejected = False
+                r.score = -w.misleading_hint_fallback - penalty - r.risk_cost
+                r.reasons += ["last resort: misleading, but every other option "
+                              "risks ending the game"] + notes
     if not include_rejected:
         recs = [r for r in recs if not r.rejected]
     return sorted(recs, key=lambda r: -r.score)
@@ -150,14 +210,21 @@ def _as_protective(ms: MetaState, r: Recommendation, w: Weights) -> MetaState:
     uid = protective_discard.chop_uid(bs, p, ms.unsafe)
     if uid is None:
         return ms
+    if not protective_discard.could_be_critical(ms, p, uid):
+        return ms  # they can't read it as "game-ending": an ordinary discard
     after = copy.deepcopy(ms)
     after.unsafe.add(uid)
     slot = next(i for i, s in enumerate(bs.public.hands[p]) if s.uid == uid)
     card = bs.hands[p][slot]
     crit = card is not None and is_critical(v, card, bs.stacks, bs.discards)
+    if card is not None and not crit:
+        r.score -= w.misleading_protective
+        r.reasons.append(f"misleading: p{p} would read their slot {slot + 1} "
+                         f"({v.card_str(card)}) as a last copy and hold it")
+        return after
     r.reasons.append(f"protective discard: tells p{p} their slot {slot + 1}"
-                     + (f" ({v.card_str(card)}, last copy) " if crit and card else " ")
-                     + "is unsafe")
+                     + (f" ({v.card_str(card)}) " if card else " ")
+                     + "is a last copy (discarding it ends the game)")
     if crit:
         # The signal protects the last copy itself. At 0 tokens no save hint is
         # possible and my known play only waits a round; at 1 token it beats a
@@ -200,10 +267,18 @@ def lookahead(ms: MetaState, hints: int, w: Weights) -> tuple[float, list[str]]:
                 hints = min(hints + 1, v.max_hints)
             continue
         if hints > 0:
+            # No known play: they may well discard rather than hint, and under
+            # D21 they'll trust a chop nobody protected. A last copy there is
+            # at risk even with tokens left.
+            chop = chop_index(ms, p)
+            card = bs.hands[p][chop] if chop is not None else None
+            if card is not None and is_critical(v, card, bs.stacks, bs.discards):
+                penalty += _crit_cost(v, w, w.lookahead_crit) * w.lookahead_may_discard
+                notes.append(f"lookahead: p{p} has no known play and might discard "
+                             f"{cs(card)} (critical) from their chop")
             hints -= 1
             continue
-        chop = chop_index(ms, p)
-        card = bs.hands[p][chop if chop is not None else 0]
+        card = bs.hands[p][discard_index(ms, p)]
         if is_critical(v, card, bs.stacks, bs.discards):
             penalty += _crit_cost(v, w, w.lookahead_crit)
             notes.append(f"lookahead: p{p} would have no hint and discard {cs(card)} "
@@ -243,6 +318,11 @@ def _plays(ms: MetaState, w: Weights) -> list[Recommendation]:
             reasons.append(f"{sv.p_playable:.0%} playable ({cands}); risks a strike")
             p_loss = sv.p_where(lambda c: not is_playable(c, bs.stacks)
                                 and is_critical(v, c, bs.stacks, bs.discards))
+            if p_loss and v.end_when_perfect_lost:
+                # D22: under our rules a miss that loses a last copy ends the
+                # game. Nobody gambles on that: hold it (discard a presumed-
+                # safe chop or stall instead).
+                continue
             if p_loss:
                 score -= _crit_cost(v, w, w.discard_crit_penalty) * p_loss
                 reasons.append(f"{p_loss:.0%} chance a miss loses the last copy"
@@ -281,37 +361,269 @@ def _maybe_waiting(ms: MetaState, sv) -> bool:
     return False
 
 
-def _receiver_misreads(ms: MetaState, target: int, kind: str, value: int,
-                      touched: tuple[int, ...]) -> str | None:
-    """Read the hint from the receiver's side; describe a harmful misreading.
+@dataclass
+class Risk:
+    """One way a reading of my hint goes wrong (D18)."""
 
-    The receiver can't see their own hand but can see mine, which I can't. So
-    their view is approximated with both hands hidden (an unlock in my hand
-    can't be intended anyway). Earlier convention inferences aren't carried
-    over. If they would conclude "self skip-level" and blind-play their newest
-    card, that card must actually be playable.
+    game_end: bool          # else it costs a strike
+    text: str
+    maybe: bool = False     # only if they take a risky blind play: half the cost
+
+    def cost(self, w: Weights) -> float:
+        c = w.game_loss if self.game_end else w.misread_strike
+        return c / 2 if self.maybe else c
+
+
+def _reader(ms: MetaState, player: int) -> MetaState:
+    """`player`'s point of view to simulate on: their model if this MetaState
+    keeps one (everything they've inferred so far), else rebuilt from scratch
+    (public info only, no earlier convention inferences)."""
+    m = ms.model(player)
+    if m is None:
+        m = MetaState(ms.bs.model_for(player))
+        m.unsafe = set(ms.unsafe)
+    return m
+
+
+def _read_hint(ms: MetaState, player: int, hint: HintEvent) -> MetaState:
+    m = _reader(ms, player)
+    m.apply(hint)
+    return m
+
+
+def _miss_ends_game(ms: MetaState, card) -> bool:
+    bs, v = ms.bs, ms.variant
+    return is_critical(v, card, bs.stacks, bs.discards) or bs.strikes >= v.max_strikes - 1
+
+
+def _slot_of(m: MetaState, player: int, uid: int) -> int | None:
+    return next((i for i, s in enumerate(m.bs.public.hands[player]) if s.uid == uid), None)
+
+
+def _hint_risks(ms: MetaState, w: Weights, tms: MetaState, hint: HintEvent,
+                my_reading) -> list[Risk]:
+    """Every harmful reading of my hint (D18): the receiver's, and bystanders'.
+
+    The receiver reads by the Meta; the giver owns the ambiguity. `tms` is the
+    receiver's state after the hint. For each reader, what they would now do
+    or "know" is checked against the real cards:
+
+    * a blind play they'd make (self skip-level newest card, multi-card lead,
+      a card they now think is certainly playable) must really play;
+    * after a self skip-level unlock plays, they narrow the hinted card to its
+      suit, so the unlock must be the hinted card's real unlock;
+    * every narrowing of their own cards must keep the real card;
+    * a hinted card they'd now blind-play on odds (risky play) that misses
+      counts at half cost.
+    Bystanders: when a hint asks a teammate for an unlock, a bystander who
+    can't see it may conclude it's in their own hand and blind-play.
     """
-    from ..conventions.base import Expectation  # noqa: F401  (type context)
-    bs, v, me = ms.bs, ms.variant, ms.observer
-    tb = copy.deepcopy(bs)
-    tb.observer = target
-    tb.hands[target] = [None] * len(tb.hands[target])
-    tb.hands[me] = [None] * len(tb.hands[me])
-    tms = MetaState(tb)
-    tms.apply(HintEvent(me, target, kind, value, touched))
-    interp = tms.interpretations[-1]
+    bs, v, me, cs = ms.bs, ms.variant, ms.observer, ms.variant.card_str
+    target = hint.target
     real = bs.hands[target]
+    risks: list[Risk] = []
+    explained: set[int] = set()  # uids already covered by a risk
+
+    def miss(card, uid, text, maybe=False):
+        risks.append(Risk(_miss_ends_game(ms, card), text, maybe))
+        explained.add(uid)
+
+    interp = tms.interpretations[-1]
     for e in interp.expectations:
         cand = e.expected
         if cand is None or cand.player != target or cand.how not in ("newest", "lead"):
             continue
-        slot = next(i for i, s in enumerate(tb.public.hands[target]) if s.uid == cand.uid)
-        card = real[slot]
-        if card is None or not is_playable(card, bs.stacks) or card not in e.options():
+        slot = _slot_of(tms, target, cand.uid)
+        card = real[slot] if slot is not None else None
+        if card is None:
+            continue
+        if not is_playable(card, bs.stacks) or card not in e.options():
             what = ("a self skip-level and blind-play their newest card" if cand.how == "newest"
                     else "the newest hinted card as the one to play first")
-            return f"p{target} would read {what} ({v.card_str(card) if card else '?'})"
-    return None
+            miss(card, cand.uid, f"p{target} would read {what} ({cs(card)})")
+            continue
+        # After the unlock plays, they narrow each hinted card to the unlock's
+        # suit (continue_self_shotgun): e.g. play W3, conclude the hinted B4 is W4.
+        for uid in e.self_hint or ():
+            hs = _slot_of(tms, target, uid)
+            hinted = real[hs] if hs is not None else None
+            if hinted is not None and hinted.suit != card.suit:
+                miss(hinted, uid, f"p{target} would play {cs(card)} as the unlock and "
+                                  f"then read their hinted {cs(hinted)} as "
+                                  f"{v.suits[card.suit].name}")
+    for r, uid in _narrowing_risks(ms, tms, target, interp):
+        if uid not in explained:
+            risks.append(r)
+            explained.add(uid)
+    # The receiver's own play options after the hint, scored the way they'd
+    # score them (a risky play that could lose a last copy is already charged
+    # there, so they'd hold a "play or save" card rather than gamble).
+    views = tms.view(target)
+    for r in _plays(tms, w):
+        sv = views[r.action.slot]
+        card = real[sv.slot]
+        if card is None or is_playable(card, bs.stacks) or sv.uid in explained \
+                or sv.slot not in hint.touched:
+            continue
+        if sv.certainly_playable:
+            miss(card, sv.uid, f"p{target} would think their {cs(card)} is playable")
+        elif r.score > 0:
+            miss(card, sv.uid, f"p{target} might blind-play their {cs(card)} "
+                               f"({sv.p_playable:.0%} playable to them)", maybe=True)
+    # Bystanders read the hint from their own view: they see the target's
+    # cards but not their own, so e.g. a card that's critical to me may not
+    # be to them, and my save becomes their skip-level. Only a hint whose
+    # touched cards are all playable (or a 5 / trash hint) can't be misread.
+    all_play = all(real[i] is not None and is_playable(real[i], bs.stacks)
+                   for i in hint.touched)
+    if not all_play and my_reading.kind not in (HintKind.SAFETY_FIVE, HintKind.TRASH):
+        for q in range(v.num_players):
+            if q in (me, target):
+                continue
+            qms = _read_hint(ms, q, hint)
+            qi = qms.interpretations[-1]
+            seen: set[int] = set()
+            for e in qi.expectations:
+                cand = e.expected
+                if cand is None or cand.player != q or cand.uid is None:
+                    continue
+                slot = _slot_of(qms, q, cand.uid)
+                card = bs.hands[q][slot] if slot is not None else None
+                # A different card that still plays (e.g. the top of a shotgun
+                # line) costs nothing; one that misses is a strike.
+                if card is not None and card not in e.options() \
+                        and not is_playable(card, bs.stacks):
+                    seen.add(cand.uid)
+                    risks.append(Risk(
+                        _miss_ends_game(ms, card),
+                        f"p{q} would think they hold the unlock "
+                        f"({'/'.join(sorted(cs(c) for c in e.options()))}) and "
+                        f"blind-play their {cs(card)}"))
+            risks += [r for r, uid in _narrowing_risks(ms, qms, q, qi) if uid not in seen]
+            # A holder I'm counting on to play an unlock must read it that way
+            # too. If they read the hint as something else (e.g. a save, when
+            # they can't see the unlock in their own hand), they won't play it;
+            # the others see a decline and the next one blind-plays.
+            for e in my_reading.expectations:
+                if e.card is None or not any(c.player == q for c in e.candidates):
+                    continue
+                if not any(x.card == e.card and any(c.player == q for c in x.candidates)
+                           for x in qi.expectations):
+                    risks.append(Risk(False, f"p{q} wouldn't know to play {cs(e.card)}: "
+                                             f"they'd read the hint as {qi.kind.value}"))
+    return risks
+
+
+def _narrowing_risks(ms: MetaState, rms: MetaState, player: int, interp):
+    """Narrowings of `player`'s own cards that leave out the real card: they'd
+    later "know" a wrong card (e.g. a save of G4 read newest-first as G2).
+    Yields (risk, uid)."""
+    cs = ms.variant.card_str
+    for uid, cards in interp.constraints.items():
+        slot = _slot_of(rms, player, uid)
+        card = ms.bs.hands[player][slot] if slot is not None else None
+        if card is not None and card not in cards:
+            yield (Risk(_miss_ends_game(ms, card),
+                        f"p{player} would narrow their {cs(card)} to "
+                        f"{'/'.join(sorted(cs(c) for c in cards))}"), uid)
+
+
+def _chain_plays(ms: MetaState, tms: MetaState, hint: HintEvent
+                 ) -> tuple[list[int], Risk | None]:
+    """Play my hint forward through the receiver's eyes (D19).
+
+    The receiver plays each touched card, newest -> oldest, as soon as they'd
+    know it's playable. If the first one waits on a teammate's visible unlock,
+    the unlock is played first. After every play, every card the receiver
+    would now think is certainly playable is checked: a play can move on an
+    older multi-card hint of theirs, which then reads its next card on the new
+    board. Returns the touched uids that really play in a row, and the risk if
+    the receiver would play a card that misses. A card they'd hold ends the run.
+    """
+    target, cs = hint.target, ms.variant.card_str
+    interp = tms.interpretations[-1]
+    hand = tms.bs.public.hands[target]
+    order = interp.chain or [hand[i].uid for i in sorted(hint.touched, reverse=True)]
+    real = {s.uid: c for s, c in zip(ms.bs.public.hands[target], ms.bs.hands[target])}
+    sim = copy.deepcopy(tms)
+    sure_before = {sv.uid for sv in sim.view(target) if sv.certainly_playable}
+    played: list[int] = []
+
+    def wrong_belief() -> Risk | None:
+        for sv in sim.view(target):
+            card = real.get(sv.uid)
+            if sv.certainly_playable and sv.uid not in sure_before and card is not None                     and not is_playable(card, sim.bs.stacks):
+                return Risk(_miss_ends_game(ms, card),
+                            f"p{target} would then read their {cs(card)} as playable and miss")
+        return None
+
+    for uid in order:
+        slot = _slot_of(sim, target, uid)
+        card = real.get(uid)
+        if slot is None or card is None:
+            break
+        if not sim.view(target)[slot].certainly_playable:
+            if played or not _will_play(sim, target, uid, hint.giver)                     or not _play_unlocks(sim, card, target):
+                break
+            if not sim.view(target)[slot].certainly_playable:
+                break
+            risk = wrong_belief()
+            if risk:
+                return played, risk
+        if not is_playable(card, sim.bs.stacks):
+            return played, Risk(_miss_ends_game(ms, card),
+                                f"p{target} would play their {cs(card)} next in line and miss")
+        sim.apply(PlayEvent(target, slot, card, True))
+        if sim.bs.deck_size > 0:
+            sim.apply(DrawEvent(target, None))
+        played.append(uid)
+        risk = wrong_belief()
+        if risk:
+            return played, risk
+        if len(interp.chain) < 2:
+            break
+    return played, None
+
+
+def _play_unlocks(sim: MetaState, card, target: int) -> bool:
+    """Simulate teammates playing the cards `card` waits on (visible in their
+    hands). No draws: only the board matters here. False if one isn't visible."""
+    bs = sim.bs
+    for r in range(bs.stacks[card.suit] + 1, card.rank):
+        need = type(card)(card.suit, r)
+        where = next(((q, i) for q, h in enumerate(bs.hands) if q != target
+                      for i, c in enumerate(h) if c == need), None)
+        if where is None:
+            return False
+        sim.apply(PlayEvent(where[0], where[1], need, True))
+    return True
+
+
+def _save_can_wait(ms: MetaState, target: int) -> bool:
+    """A chop save can wait a round: the target knows of a play (so they play
+    rather than discard on their next turn), and at least 2 tokens will be
+    left after my hint for someone to save it later."""
+    if ms.bs.hints - 1 < 2:
+        return False
+    m = ms.models.get(target) if ms.models else None
+    m = m or ms
+    return m._has_known_play(target)
+
+
+def _will_play(tms: MetaState, target: int, uid: int, giver: int) -> bool:
+    """Will the receiver act on this hinted card: they know it's playable, are
+    expected to play it, or know it waits on a teammate's visible unlock."""
+    from ..conventions.skip_level import locate_unlocks
+    slot = _slot_of(tms, target, uid)
+    if slot is None:
+        return False
+    sv = tms.view(target)[slot]
+    if sv.certainly_playable or any(e.expected and e.expected.uid == uid
+                                    for e in tms.expected_of(target)):
+        return True
+    bs = tms.bs
+    return all(is_playable(c, bs.stacks) or not locate_unlocks(bs, c, giver)[1]
+               for c in sv.candidates)
 
 
 def _o4_ok(ms: MetaState, holder: int, holder_uid: int, card, target: int,
@@ -423,26 +735,38 @@ def _discards(ms: MetaState, w: Weights) -> list[Recommendation]:
                                                    f"regains a hint ({bs.hints} now)"]))
     chop = chop_index(ms, me)
     if chop is None and not trash:
-        a = Action.discard(0)
-        out.append(Recommendation(a, w.discard_base + token_bonus
-                                  - _crit_cost(v, w, w.discard_crit_penalty),
-                                  describe(v, a), ["every card is hinted or flagged "
-                                                   "unsafe: oldest card as a last resort"]))
+        k = last_resort_index(ms, me)
+        sv = views[k]
+        p_crit = 1.0 if sv.uid in ms.unsafe else sv.p_critical
+        a = Action.discard(k)
+        out.append(Recommendation(
+            a, w.discard_base + token_bonus
+            - _crit_cost(v, w, w.discard_crit_penalty) * p_crit
+            - w.discard_playable_penalty * sv.p_playable,
+            describe(v, a),
+            ["every card is hinted or flagged game-ending: discarding the one least "
+             f"likely to be a last copy ({p_crit:.0%} critical)"]))
     if chop is not None and not (trash and trash[0].slot == chop):
         sv = views[chop]
         a = Action.discard(chop)
         crit_cost = _crit_cost(v, w, w.discard_crit_penalty)
+        watched = ms.chop_watched(me)
+        if watched:
+            crit_cost *= w.watched_chop_risk
         score = (w.discard_base + token_bonus - crit_cost * sv.p_critical
                  - w.discard_playable_penalty * sv.p_playable)
         reasons = ["oldest un-hinted card (default discard)",
                    f"regains a hint ({bs.hints} now)"]
         skipped = [s for s in bs.public.hands[me][:chop] if s.uid in ms.unsafe]
         if skipped:
-            reasons.append(f"skips {len(skipped)} card(s) flagged unsafe by a "
+            reasons.append(f"skips {len(skipped)} card(s) flagged game-ending by a "
                            f"protective discard")
         if sv.p_critical:
             reasons.append(f"{sv.p_critical:.0%} chance it is critical"
                            + (" (losing it ends the game)" if v.end_when_perfect_lost else ""))
+            if watched:
+                reasons.append(f"p{ms.last_actor} saw it on my chop and didn't protect "
+                               f"it: presumed safe (D21)")
         if sv.p_playable:
             reasons.append(f"{sv.p_playable:.0%} chance it is playable")
         out.append(Recommendation(a, score, describe(v, a), reasons))
@@ -476,9 +800,11 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
         return None
     a = Action.hint_color(target, value) if kind == "color" else Action.hint_rank(target, value)
     cs = v.card_str
+    hint = HintEvent(me, target, kind, value, touched)
     sim = copy.deepcopy(ms)
-    sim.apply(HintEvent(me, target, kind, value, touched))
+    sim.apply(hint)
     interp = sim.interpretations[-1]
+    tms = _read_hint(ms, target, hint)  # how the receiver will read it
     before = ms.view(target)
     already = {e.expected.uid for e in ms.expected_of(target) if e.expected}
     touched_str = " ".join(cs(hand[i]) for i in touched) or "nothing"
@@ -521,19 +847,35 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
             rejected = True
             reasons.append(problem)
 
+    chain, chain_risk = _chain_plays(ms, tms, hint)
     if rejected or rehint:
         pass
     elif interp.kind is HintKind.PLAY:
         new = [u for u in interp.focus
                if u not in already and not before[uid_to_slot[u]].certainly_playable]
-        if new:
-            score = w.play_hint_base + w.per_new_play * len(new)
-            reasons.append(f"{len(new)} new playable card(s)")
+        # Only plays the receiver can see count (D18): a playable card they
+        # can't tell from a non-playable one just gets held.
+        acted = [u for u in new if _will_play(tms, target, u, me) or u in chain]
+        unclear = [u for u in new if u not in acted]
+        if acted:
+            score = w.play_hint_base + w.per_new_play * len(acted)
+            reasons.append(f"{len(acted)} new playable card(s)")
+        elif new:
+            score = w.info_only
         else:
             reasons.append("adds nothing: already known")
+        if unclear:
+            score += w.unclear_play * len(unclear)
+            reasons.append(f"p{target} can't tell " + ", ".join(
+                cs(hand[uid_to_slot[u]]) for u in unclear) + " is playable: they'd hold it")
     elif interp.kind in (HintKind.SKIP_LEVEL, HintKind.SHOTGUN):
         new_exps = [e for e in interp.expectations if e.card is not None]
-        score = w.skip_hint_base + w.per_new_play * len(new_exps)
+        # The hinted cards play too, once unlocked, if the receiver can tell.
+        then = [u for u in interp.focus if u in uid_to_slot and u not in already
+                and _will_play(tms, target, u, me)]
+        score = w.skip_hint_base + w.per_new_play * (len(new_exps) + len(then))
+        for u in then:
+            reasons.append(f"p{target} then plays {cs(hand[uid_to_slot[u]])}")
         for e in new_exps:
             if e.expected:
                 reasons.append(f"p{e.expected.player} should play {cs(e.card)} "
@@ -552,11 +894,17 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
         score = w.save_chop if on_chop else w.save_not_chop
         reasons.append("saves a critical card on their chop" if on_chop
                        else "saves a critical card (not on chop yet)")
+        if on_chop and _save_can_wait(ms, target):
+            score = w.save_can_wait
+            reasons.append(f"can wait: p{target} has a play first")
     elif interp.kind is HintKind.SAFETY_FIVE:
         chop = chop_index(ms, target)
         on_chop = chop is not None and chop in touched
         score = w.safety_five_chop if on_chop else w.safety_five_other
         reasons.append("protects a 5 on their chop" if on_chop else "5 not on chop yet")
+        if on_chop and _save_can_wait(ms, target):
+            score = w.save_can_wait
+            reasons.append(f"can wait: p{target} has a play first")
         reasons.append("everyone but you reverses their untouched cards (safety swap)")
     elif interp.kind is HintKind.TRASH:
         fresh = [i for i in touched if not before[i].certainly_trash]
@@ -566,11 +914,9 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
         rejected = True
         reasons.append("misleading: teammates would draw wrong conclusions (D3c)")
 
-    if not rejected:
-        problem = _receiver_misreads(ms, target, kind, value, touched)
-        if problem:
-            rejected = True
-            reasons.append(f"misleading: {problem} (D3c)")
+    risks = _hint_risks(ms, w, tms, hint, interp)
+    if chain_risk and not any(r.text == chain_risk.text for r in risks):
+        risks.append(chain_risk)
 
     # A hint also makes non-focus cards collateral; flag a critical chop card that
     # stays unprotected only via the save branch above.
@@ -588,10 +934,24 @@ def _evaluate_hint(ms: MetaState, w: Weights, target: int, kind: str, value: int
     if not rejected and bs.hints == 1:
         score -= w.last_token_penalty
         reasons.append("spends the last hint token")
-    if not rejected and score <= 0:
-        return None
+    if not rejected and score <= 0 and not risks:
+        # Worth nothing, but harmless: a stall. It ranks below every option that
+        # does something, and above a gamble on a last copy or a discard that
+        # risks the game (D18: the least bad lead).
+        score = w.stall_hint - (w.last_token_penalty if bs.hints == 1 else 0)
+        reasons.append("stall: harmless, but achieves nothing")
+    risk_cost = sum(r.cost(w) for r in risks)
+    for r in risks if not rejected else ():
+        # Ambiguous (D18): kept, but below any clean option, so it's only
+        # chosen when every alternative risks more.
+        score -= r.cost(w)
+        reasons.append(f"ambiguous: {r.text}" + (" (ends the game)" if r.game_end
+                                                 else " (a strike)")
+                       + (", if they take the risk" if r.maybe else ""))
     crit_touched = [i for i in touched if is_critical(v, hand[i], bs.stacks, bs.discards)]
     if crit_touched and interp.kind is not HintKind.SAVE and not rejected:
         reasons.append("also marks a critical card")
+    if rejected:
+        reasons += [f"if given anyway: {r.text}" for r in risks]
     return Recommendation(a, score if not rejected else -1000, describe(v, a), reasons,
-                          rejected, after=sim)
+                          rejected, after=sim, risk_cost=risk_cost)

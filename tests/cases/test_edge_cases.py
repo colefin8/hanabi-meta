@@ -130,14 +130,19 @@ def test_three_twos_with_one_playable_pile_newest_is_the_two():
     assert "Y2" in t.my_slot(1) and len(t.my_slot(1)) > 1
 
 
+def _ambiguous(r):
+    """D18: a hint with a harmful reading is kept but scored below zero."""
+    return r.rejected or (r.score < 0 and any(x.startswith("ambiguous:") for x in r.reasons))
+
+
 def test_advisor_rejects_multi_card_hint_whose_newest_card_is_not_playable():
     bad = Scenario("regular", hands=["? ? ? ?", "R4 Y2 B4 Y3", "G4 B3 R3 W4",
                                      "G3 W5 B5 R2"], stacks="Y1")
     h = _hints(bad)["hint p1 yellow"]
-    assert h.rejected and any("first" in r for r in h.reasons)
+    assert _ambiguous(h) and any("first" in r for r in h.reasons)
     good = Scenario("regular", hands=["? ? ? ?", "R4 Y3 B4 Y2", "G4 B3 R3 W4",
                                       "G3 W5 B5 R2"], stacks="Y1")
-    assert not _hints(good)["hint p1 yellow"].rejected
+    assert not _ambiguous(_hints(good)["hint p1 yellow"])
 
 
 # ---- duplicate-hint convention (O4) -----------------------------------------------
@@ -239,25 +244,38 @@ def test_advisor_sees_protective_discard_vs_spending_the_last_token():
     assert advise(t.ms)[0].summary == "discard slot 1"
 
 
-def test_house_rule_prefers_the_safe_save_over_a_risky_protective_discard():
+def test_house_rule_protective_discard_beats_the_save_when_my_chop_was_watched():
     # Our rules: losing a last copy ends the game. My blind chop might be one
-    # (13%), so the save hint, which risks nothing, beats the protective discard.
+    # (13%), but p2 just acted and saw it on my chop without protecting it, so
+    # it's presumed safe (D21). Protective discards come first; the save hint
+    # is the last resort.
     t = _protect_table(1)
     recs = advise(t.ms)
-    assert recs[0].summary == "hint p2 blue"
-    discard = next(r for r in recs if r.summary == "discard slot 1")
+    assert recs[0].summary == "discard slot 1"
+    discard = recs[0]
     assert any("protective discard: tells p2" in r for r in discard.reasons)
-    assert any("losing it ends the game" in r for r in discard.reasons)
+    assert any("presumed safe (D21)" in r for r in discard.reasons)
+
+
+def test_house_rule_prefers_the_save_when_my_chop_wasnt_watched():
+    # Same table, but my chop is new since p2 acted (I'd drawn and nobody had
+    # looked at it as my chop yet): my own 13% risk counts in full, so the safe
+    # save hint wins.
+    t = _protect_table(1)
+    t.ms.chops_before_last[0] = None
+    recs = advise(t.ms)
+    assert recs[0].summary == "hint p2 blue"
 
 
 def test_save_hint_wins_when_the_signal_would_protect_the_wrong_card():
     # p1 has nothing to play, so a protective discard would protect p1's chop
-    # (a G3, not needed). p2's last B2 is only saved by a direct hint.
+    # (a G3, not needed). That reading is misleading (unsafe = game-ending), and
+    # p2's last B2 is only saved by a direct hint.
     t = Scenario("regular", hands=["? ? ? ? ?", "G3 B4 W3 R3 Y3", "B2 W4 R3 G4 Y4"],
                  discards="B2", hints=1)
     recs = advise(t.ms)
     disc = next(r for r in recs if r.summary == "discard slot 1")
-    assert any("tells p1" in r for r in disc.reasons)
+    assert any("misleading: p1 would read" in r for r in disc.reasons)
     assert recs[0].summary in ("hint p2 blue", "hint p2 2s")
 
 
@@ -295,3 +313,88 @@ def test_advisor_at_zero_tokens_discards_over_a_play_to_protect():
     assert any("B2 (critical)" in r for r in play.reasons)
     assert any("protective discard: tells p1" in r for r in disc.reasons)
     assert disc.score > play.score
+
+
+# ---- unsafe = game-ending (2026-11-26) ---------------------------------------------
+
+def test_flag_on_my_chop_moves_my_chop_without_narrowing_it():
+    # p2 discards with 1 token; p0 (me) has nothing known to play, so I'm the one
+    # protected: my chop is treated as a last copy.
+    t = Scenario("regular", hands=["? ? ? ? ?", "R3 B4 W3 G3 Y3", "B2 W4 R3 G4 Y4"],
+                 hints=1)
+    t.discard(2, 0, "B2", draw="G2")
+    assert t.bs.public.hands[0][0].uid in t.ms.unsafe
+    # The flag doesn't narrow what the card is (that caused confident misplays
+    # when a flag was wrong); it only moves my chop to the next card.
+    assert t.ms.view(0)[0].p_critical < 1.0
+    from hanabi_meta.advisor.advisor import chop_index
+    assert chop_index(t.ms, 0) == 1
+
+
+def test_flag_drops_once_the_holder_knows_it_is_not_a_last_copy():
+    # p0 discards at 1 token and p1 (nothing to play) reads their chop as a last
+    # copy. It's really a G3 with both copies alive. Once hints show p1 it's G3,
+    # it can't be critical, and the flag goes.
+    t = Scenario("regular", hands=["? ? ? ? ?", "G3 B4 W4 R4 Y4", "B3 W1 R1 G4 Y2"],
+                 hints=1)
+    t.discard(0, 0, "G1")
+    g3 = t.bs.public.hands[1][0].uid
+    assert g3 in t.ms.unsafe
+    t.hint(2, 1, "G")
+    assert g3 in t.ms.unsafe                 # could still be G5
+    t.hint(2, 1, "3")
+    assert g3 not in t.ms.unsafe
+
+
+def test_last_resort_discards_the_card_least_likely_to_end_the_game():
+    # Every card of mine is hinted: two 4s (R4 and G4 each have a copy gone)
+    # and three 1s. The "4" on my chop reads as a save (D20): it's the last R4
+    # (p2 shows the last G4), so my other 4 isn't a last copy. The last resort
+    # is never the saved R4, my oldest card.
+    t = Scenario("regular", hands=["? ? ? ? ?", "R3 B4 W3 G3 Y3", "B3 W4 R3 G4 Y4"],
+                 discards="R4 G4", hints=3)
+    t.hint(1, 0, "4", touched=[0, 1])
+    t.hint(2, 0, "1", touched=[2, 3, 4])
+    disc = [r for r in advise(t.ms) if r.action.type.name == "DISCARD"]
+    assert disc and all(r.action.slot != 0 for r in disc)
+
+
+def test_misleading_hint_beats_a_certain_game_loss():
+    # My hand is five hinted 5s. I have 1 token and no play, and every hint to
+    # p1 is misleading. Discarding a 5 ends the game, so a misleading hint is
+    # the last resort.
+    t = Scenario("regular", hands=["? ? ? ? ?", "G4 R4 B2 B2 G3"], hints=2)
+    t.hint(1, 0, "5", touched=[0, 1, 2, 3, 4])
+    normal = advise(t.ms)
+    assert all(r.score < -150 or r.action.is_hint for r in normal)
+    assert normal[0].action.is_hint
+    assert any("last resort: misleading" in r for r in normal[0].reasons)
+
+
+def test_self_skip_hint_rejected_when_the_unlock_is_another_suit():
+    # From self-play (rainbow 3p seed 5): "4" on p1's last B4 with blue at 1 and
+    # no B2 visible. I mean a save, but p1 can't tell it's a last copy: they read
+    # a self skip-level and play their newest card, W3, which plays. Then they
+    # narrow the hinted 4 to white ("W4") and later blind-play the B4 as
+    # certain. The hint is ambiguous: it costs a strike (D18).
+    t = Scenario("regular", hands=["? ? ? ? ?", "B3 G1 B4 R5 W3", "R1 Y1 G5 B5 Y5"],
+                 stacks="R2 Y2 G1 B1 W2", discards="B1 B4 R4", hints=5)
+    recs = advise(t.ms, include_rejected=True)
+    four = next(r for r in recs if r.summary == "hint p1 4s")
+    assert _ambiguous(four) and four is not recs[0]
+    assert any("read their hinted B4 as white" in x for x in four.reasons)
+
+
+def test_hint_rejected_when_the_receiver_would_narrow_out_the_real_card():
+    # From self-play (rainbow 4p seed 8): "green" on p1's G4 and G3 (newest),
+    # green at 1, no G2 visible. I'd mean a save of the last G4, but p1 reads
+    # newest-first (D13, D17): the G3 is "playable now" and narrows to G2, then
+    # gets played as certain.
+    # The M2 in p3's newest slot makes "M3, visibly unlocked" a reading too, so
+    # the newest card isn't blind-played: it's narrowed, wrongly.
+    t = Scenario("rainbow", hands=["? ? ? ?", "R5 W1 G4 G3", "Y3 Y4 B1 Y4", "W5 B4 R4 M2"],
+                 stacks="R2 Y1 G1 B2 W1 M1", discards="G4", hints=3)
+    recs = advise(t.ms, include_rejected=True)
+    green = next(r for r in recs if r.summary == "hint p1 green")
+    assert _ambiguous(green) and green is not recs[0]
+    assert any("would narrow their G3" in x for x in green.reasons)

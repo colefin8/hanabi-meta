@@ -42,9 +42,13 @@ class PublicKnowledge:
     def __init__(self, variant: Variant) -> None:
         self.variant = variant
         self.hands: list[list[SlotInfo]] = [[] for _ in range(variant.num_players)]
+        #: uids count per table, so every seat (and every model of a teammate)
+        #: fed the same events gives the same physical card the same uid.
+        self._next_uid = 0
 
     def add_slot(self, player: int, turn: int) -> SlotInfo:
-        s = SlotInfo(set(self.variant.all_cards()), turn)
+        s = SlotInfo(set(self.variant.all_cards()), turn, self._next_uid)
+        self._next_uid += 1
         self.hands[player].append(s)
         return s
 

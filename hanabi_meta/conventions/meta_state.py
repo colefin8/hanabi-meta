@@ -7,7 +7,7 @@ them from what players did *and did not do* on their turns:
 * The expected player plays a different card their own info already said was
   playable: still pending ("play on the information you already have first").
 * The expected player gives an urgent save (a hint read as a save or a 5
-  safety hint): the play is only delayed. That turn doesn't count as
+  safety hint) or makes a protective discard: the play is only delayed. That turn doesn't count as
   declining; the next turn they don't play it does.
 * The expected player does anything else while the expected card is playable:
   they declined, so the next candidate is expected. When it reaches the
@@ -25,37 +25,88 @@ Other conventions handled here:
 * playable 5: after the receiver of a dead color hint discards that card.
 * protective discard: at 0 tokens with a known play, or at 1 token, flags the
   chop of the first player (up to 3 seats ahead) who'd have been forced to
-  discard (`unsafe`).
+  discard (`unsafe`). Unsafe = game-ending: the flagged card is treated as a last
+  copy when choosing a discard (its identity isn't narrowed).
 * duplicate signal (O4): a player discards a card they knew from their own info,
   while it is still needed. Another player's newest hinted card that could be
   that card is it, and they are expected to play it.
+
+Teammate models (D18): with `models=True`, a MetaState also keeps, for every
+teammate, a MetaState from that teammate's point of view (`models[p]`), fed the
+same events. The giver uses it to read a hint the way each teammate will, with
+everything they've inferred so far. It is exact except for the observer's own
+hand, which the model can't see either: the teammate sees it, so the model is a
+lower bound on what they know. A hint to the observer is read, in the models,
+the way the observer read it (that is the reading everyone shares when the
+giver follows the Meta), with the teammate's own cards turned back into
+"maybe me" (they can't see them).
 """
 from __future__ import annotations
 
-from ..belief.bookkeeping import is_playable, is_trash
+import copy
+
+from ..belief.bookkeeping import is_playable, is_trash, unseen_counts
 from ..belief.tracker import BeliefState, SlotView
 from ..engine.actions import (DiscardEvent, DrawEvent, Event, HintEvent, PlayEvent,
                               ReorderEvent)
 from ..engine.variant import Card, Variant
 from . import playable_five, protective_discard, safety_swap, skip_level, trash_hint
-from .base import Candidate, ExpStatus, Expectation, HintKind, Interpretation
+from .base import (Candidate, ExpStatus, Expectation, HintKind, Interpretation,
+                   observer_line)
 
 
 class MetaState:
-    def __init__(self, bs: BeliefState) -> None:
+    def __init__(self, bs: BeliefState, models: bool = False) -> None:
         self.bs = bs
         self.interpretations: list[Interpretation] = []
         #: The hint behind each interpretation (None for non-hint signals).
         self.hint_events: list[HintEvent | None] = []
-        #: uids of cards known (by convention) to be unsafe to discard.
+        #: uids of cards known (by convention) to be game-ending to discard.
         self.unsafe: set[int] = set()
         self.notes: list[str] = []
         #: Safety-swap reorders caused by the last event (for engine harnesses).
         self.last_reorders: list[ReorderEvent] = []
+        #: The last player to act, and every player's chop uid just before they
+        #: acted (for chop_watched).
+        self.last_actor: int | None = None
+        self.chops_before_last: dict[int, int | None] = {}
+        #: Teammate models (see module docstring), or None.
+        self.models: dict[int, MetaState] | None = None
+        if models:
+            self.models = {p: MetaState(bs.model_for(p))
+                           for p in range(bs.variant.num_players) if p != bs.observer}
+            for m in self.models.values():
+                m.unsafe = set(self.unsafe)
 
     @classmethod
-    def new(cls, variant: Variant, observer: int) -> "MetaState":
-        return cls(BeliefState(variant, observer))
+    def new(cls, variant: Variant, observer: int, models: bool = False) -> "MetaState":
+        return cls(BeliefState(variant, observer), models=models)
+
+    def __deepcopy__(self, memo):
+        """Copies leave the teammate models out: simulations don't need them, and
+        copying n states per simulated action would be slow."""
+        out = MetaState.__new__(MetaState)
+        memo[id(self)] = out
+        for k, val in self.__dict__.items():
+            setattr(out, k, None if k == "models" else copy.deepcopy(val, memo))
+        return out
+
+    def chop_watched(self, player: int) -> bool:
+        """D6/D21: `player`'s chop was already their chop when the previous
+        player acted, and that player did nothing to protect it. Under the Meta
+        protecting a last copy on someone's chop is the teammates' job (a
+        protective discard, or a save as a last resort), so the chop is
+        presumed safe to discard."""
+        uid = protective_discard.chop_uid(self.bs, player, self.unsafe)
+        return (uid is not None and self.last_actor is not None
+                and self.last_actor != player
+                and self.chops_before_last.get(player) == uid)
+
+    def model(self, player: int) -> "MetaState | None":
+        """A fresh copy of `player`'s model, to simulate on (None without models)."""
+        if not self.models or player not in self.models:
+            return None
+        return copy.deepcopy(self.models[player])
 
     @property
     def variant(self) -> Variant:
@@ -73,15 +124,39 @@ class MetaState:
         return [e for e in self.expectations if e.status is ExpStatus.PENDING]
 
     # ---- events ------------------------------------------------------------------
-    def apply(self, event: Event) -> None:
+    def apply(self, event: Event, reading: Interpretation | None = None) -> None:
+        """Apply one event. `reading`: for a hint to a player this state can't
+        see (a model's builder), how that player read it."""
+        self._apply(event, reading)
+        if self.models:
+            for p, m in self.models.items():
+                ev, r = event, None
+                if isinstance(event, DrawEvent) and event.player == p:
+                    ev = DrawEvent(p, None)
+                elif isinstance(event, HintEvent) and event.target == self.observer:
+                    r = _shared_reading(self.interpretations[-1], m)
+                m.apply(ev, r)
+
+    def _apply(self, event: Event, reading: Interpretation | None) -> None:
         bs = self.bs
         self.last_reorders = []
+        if isinstance(event, (HintEvent, PlayEvent, DiscardEvent)):
+            # Every chop as the actor saw it before acting (see chop_watched).
+            self.last_actor = event.giver if isinstance(event, HintEvent) else event.player
+            self.chops_before_last = {
+                p: protective_discard.chop_uid(bs, p, self.unsafe)
+                for p in range(self.variant.num_players)}
         if isinstance(event, HintEvent):
             stacks_before = list(bs.stacks)
             bs.apply(event)
             idx = len(self.interpretations)
             interp = None
-            if not (event.kind == "rank" and event.value == 5):  # every 5 hint = safety
+            if reading is not None:
+                interp = reading
+                interp.hint_index = idx
+                for e in interp.expectations:
+                    e.source_hint = idx
+            elif not (event.kind == "rank" and event.value == 5):  # every 5 hint = safety
                 interp = trash_hint.interpret_hint(bs, event, idx)
             interp = interp or skip_level.interpret_hint(bs, event, idx)
             urgent = interp.kind in (HintKind.SAVE, HintKind.SAFETY_FIVE)
@@ -98,9 +173,7 @@ class MetaState:
             uid = bs.public.hands[event.player][event.slot].uid
             # "Known" = their own info says playable, or a convention told them to
             # play this exact card (e.g. a plain play hint).
-            was_known_playable = bs.view(event.player)[event.slot].certainly_playable or any(
-                e.expected and e.expected.player == event.player and e.expected.uid == uid
-                for e in self.pending())
+            was_known_playable = self._knew_playable(event.player, event.slot, uid)
             stacks_before = list(bs.stacks)
             hints_before = bs.hints
             knew = self.view(event.player)[event.slot].known
@@ -109,12 +182,19 @@ class MetaState:
             if isinstance(event, PlayEvent):
                 self._on_play(event, uid, was_known_playable, stacks_before)
             else:
-                self._actor_did_not_play(event.player, stacks_before)
+                # A protective discard (D15) is a sensible reason to put off an
+                # expected play, like an urgent save: not a decline.
+                protective = protective_discard.is_protective(bs, event, hints_before,
+                                                              had_play)
+                self._actor_did_not_play(event.player, stacks_before, excuse=protective,
+                                         why="made a protective discard")
                 self._on_discard(event, uid, hints_before, knew, had_play)
         elif isinstance(event, (DrawEvent, ReorderEvent)):
             bs.apply(event)
         else:
             raise TypeError(event)
+        if self.unsafe:
+            protective_discard.prune(self, self.unsafe)
         self._settle()
 
     def apply_all(self, events: list[Event]) -> "MetaState":
@@ -124,6 +204,7 @@ class MetaState:
 
     def _on_play(self, ev: PlayEvent, uid: int, was_known: bool,
                  stacks_before: list[int]) -> None:
+        self._advance_chains(uid, ev.success)
         for e in self.pending():
             cand = e.expected
             if cand and cand.player == ev.player and cand.uid == uid:
@@ -145,6 +226,7 @@ class MetaState:
 
     def _on_discard(self, ev: DiscardEvent, uid: int, hints_before: int,
                     knew=None, had_play: bool = False) -> None:
+        self._advance_chains(uid, False)
         self.unsafe.discard(uid)
         if knew == ev.card:
             self._duplicate_signal(ev)
@@ -161,6 +243,47 @@ class MetaState:
                             if s.uid == uid)
                 self.notes.append(f"protective discard by p{ev.player}: p{p}'s slot "
                                   f"{slot + 1} is unsafe to discard")
+
+    def _advance_chains(self, uid: int, played: bool) -> None:
+        """A chain card (D19) left my hand.
+
+        After a successful play, the next touched card is read right away, on
+        the board as it is now: playable now, or waiting on an unlock a
+        teammate visibly holds. That reading is fixed; if nothing it could be
+        has somewhere to go now, the chain ends (a later play elsewhere doesn't
+        revive it). A miss or a discard also ends it.
+        """
+        for i in self.interpretations:
+            if uid not in i.chain:
+                continue
+            if not played or i.target != self.observer:
+                i.chain = []
+                continue
+            mine = {sl.uid for sl in self.bs.public.hands[self.observer]}
+            rest = [u for u in i.chain[i.chain.index(uid) + 1:] if u in mine]
+            i.chain = []
+            if not rest:
+                continue
+            sv = next(x for x in self.view(self.observer) if x.uid == rest[0])
+            opts = skip_level.chain_options(self.bs, sv.candidates, i.giver)
+            if opts:
+                i.constraints[rest[0]] = opts
+                i.chain = rest
+
+    def _knew_playable(self, player: int, slot: int, uid: int) -> bool:
+        """Did `player` know this card was playable before playing it: by their
+        hint info, by a convention narrowing (their model, or my own view of my
+        hand), as the focus of a play hint to them, or as an expected play?
+        A known play is never a decline of another expected card (D2)."""
+        if self.view(player)[slot].certainly_playable:
+            return True
+        if self.models and player in self.models and                 self.models[player].view(player)[slot].certainly_playable:
+            return True
+        if any(i.kind is HintKind.PLAY and i.target == player and uid in i.focus
+               for i in self.interpretations):
+            return True
+        return any(e.expected and e.expected.player == player and e.expected.uid == uid
+                   for e in self.pending())
 
     def _has_known_play(self, player: int, skip: int | None = None) -> bool:
         """Does `player` know of a card they could play (by info or convention)?"""
@@ -206,14 +329,14 @@ class MetaState:
             return
 
     def _actor_did_not_play(self, player: int, stacks: list[int] | None = None,
-                            excuse: bool = False) -> None:
+                            excuse: bool = False, why: str = "gave an urgent save") -> None:
         stacks = self.bs.stacks if stacks is None else stacks
         for e in self.pending():
             cand = e.expected
             if cand and cand.player == player:
                 if excuse and (e.card is None or is_playable(e.card, stacks)):
                     e.excused += 1
-                    e.log.append(f"player {player} gave an urgent save; play delayed")
+                    e.log.append(f"player {player} {why}; play delayed")
                     continue
                 self._decline(e, player, stacks)
 
@@ -276,6 +399,10 @@ class MetaState:
             cand = e.expected
             if cand and cand.player == self.observer and cand.uid is not None:
                 add(cand.uid, e.options())
+        # A protective-discard flag ("discarding this ends the game") is NOT a
+        # constraint on the card's identity: narrowing it to the critical cards
+        # turned wrong flags into confident misplays. It only affects discards
+        # (chop_index skips it; the last resort treats it as critical).
         return out
 
     def view(self, player: int) -> list[SlotView]:
@@ -299,3 +426,27 @@ class MetaState:
                 lines.append(f"    {want}: {state}")
         lines += self.notes
         return lines
+
+
+def _shared_reading(mine: Interpretation, model: MetaState) -> Interpretation:
+    """My reading of a hint to me, as a teammate (`model`'s observer) holds it.
+
+    They can see my cards and I can't, so my reading is the best guess of
+    theirs. Narrowings of my own cards are dropped (they don't change how the
+    teammate reads later hints), and candidates in the teammate's own hand
+    (which I could see and they can't) become their "maybe me" fallback.
+    """
+    r = copy.deepcopy(mine)
+    r.constraints = {}
+    t, bs = model.observer, model.bs
+    can_hold = unseen_counts(bs.variant, bs.seen_by(t))
+    for e in r.expectations:
+        if not any(c.player == t for c in e.candidates):
+            continue
+        cur = e.expected
+        keep = [c for c in e.candidates if c.player != t]
+        if any(can_hold[c] > 0 for c in e.options()):
+            keep.append(Candidate(t, None, "inferred", line=observer_line(bs)))
+        e.current = keep.index(cur) if cur in keep else min(e.current, len(keep) - 1)             if keep else 0
+        e.candidates = keep
+    return r

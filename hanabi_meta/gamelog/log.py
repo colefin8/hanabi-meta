@@ -154,31 +154,41 @@ class LoggedGame:
 
 
 def read_games(path: Path | str) -> Iterator[LoggedGame]:
-    cur: LoggedGame | None = None
     with open(path, encoding="utf-8") as f:
-        for n, line in enumerate(f, 1):
-            if not line.strip():
-                continue
-            r = json.loads(line)
-            t = r.get("type")
-            if t == "game_start":
-                if r.get("format_version") != FORMAT_VERSION:
-                    raise ValueError(f"line {n}: unsupported format_version")
-                if cur:
-                    yield cur
-                cur = LoggedGame(r, [], [], None)
-            elif cur is None:
-                raise ValueError(f"line {n}: record before game_start")
-            elif t == "deal":
-                cur.deal = r["events"]
-            elif t == "turn":
-                cur.turns.append(r)
-            elif t == "game_end":
-                cur.end = r
-            else:
-                raise ValueError(f"line {n}: unknown record type {t!r}")
+        yield from parse_games(f)
+
+
+def parse_games(lines: Iterable[str]) -> Iterator[LoggedGame]:
+    """Games from JSONL lines (a file, or pasted text split into lines)."""
+    cur: LoggedGame | None = None
+    for n, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        t = r.get("type")
+        if t == "game_start":
+            if r.get("format_version") != FORMAT_VERSION:
+                raise ValueError(f"line {n}: unsupported format_version")
+            if cur:
+                yield cur
+            cur = LoggedGame(r, [], [], None)
+        elif cur is None:
+            raise ValueError(f"line {n}: record before game_start")
+        elif t == "deal":
+            cur.deal = r["events"]
+        elif t == "turn":
+            cur.turns.append(r)
+        elif t == "game_end":
+            cur.end = r
+        else:
+            raise ValueError(f"line {n}: unknown record type {t!r}")
     if cur:
         yield cur
+
+
+def from_records(records: Iterable[dict[str, Any]]) -> LoggedGame:
+    """A LoggedGame from a recorder's records (no file round trip)."""
+    return next(parse_games(json.dumps(r) for r in records))
 
 
 def replay(g: LoggedGame) -> Game:

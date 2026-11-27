@@ -35,7 +35,8 @@ class Scenario:
             heights[c.suit] = c.rank
         disc = [v.parse_card(t) for t in discards.split()]
         self.ms = MetaState(BeliefState.from_snapshot(
-            v, observer, parsed, heights, disc, hints, strikes, deck_size, turns_left))
+            v, observer, parsed, heights, disc, hints, strikes, deck_size, turns_left),
+            models=True)
 
     @property
     def bs(self) -> BeliefState:

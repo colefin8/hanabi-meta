@@ -146,6 +146,16 @@ Every seat is a Meta agent that follows the advisor. The summary shows:
 
 Run it after changing a convention or a weight, to catch regressions.
 
+To see *why* games weren't perfect (needs a log written with `--views`):
+
+```powershell
+.venv\Scripts\python -m hanabi_meta.selfplay.analyze selfplay.jsonl --examples 2
+```
+
+It finds the turn each game was lost on, sorts the losses into patterns (hinted
+last copy discarded, missed save, pace, misplay, ...) and prints examples. The
+latest findings are in [docs/SELFPLAY_FINDINGS.md](docs/SELFPLAY_FINDINGS.md).
+
 ## Layout
 
 ```
@@ -164,7 +174,8 @@ hanabi_meta/
   cli/           game_file.py (text format), spectator.py (outside observer mode),
                  __main__.py (REPL and --advise)
   gamelog/       JSONL recorder/reader/replay (named to avoid shadowing stdlib `logging`)
-  selfplay/      Meta agents that use the advisor; regression + convention stats
+  selfplay/      Meta agents that use the advisor; regression + convention stats;
+                 analyze.py: classify why each game wasn't perfect
 tests/
   test_engine.py, test_belief.py
   cases/         one file per convention of concrete table situations (see
